@@ -511,7 +511,7 @@ function StoppedUI:CreateNotificationBell()
     bell.Parent = bellContainer
     
     -- Set bell icon (Imgur or fallback)
-    self:SetImageFromImgur(bell, self.NotificationBellImgurHash)
+    self:SetImageFromImgur(bell, self.NotificationBellImgurHash, "3926305904")
     
     -- Badge (notification count)
     local badge = Instance.new("TextLabel")
