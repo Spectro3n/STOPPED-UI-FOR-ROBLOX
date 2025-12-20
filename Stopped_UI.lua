@@ -125,6 +125,28 @@ function StoppedUI:Tr(key)
     return key
 end
 
+function StoppedUI:ApplyTranslations()
+    for _, entry in pairs(self._translatedElements or {}) do
+        local inst = entry.Instance
+        local key = entry.Key
+        if inst and key and self.Translations[self.Locale] and self.Translations[self.Locale][key] then
+            pcall(function() inst.Text = self.Translations[self.Locale][key] end)
+        end
+    end
+end
+
+function StoppedUI:StatusNotify(name, status, duration)
+    duration = duration or 3
+    local mapping = {
+        Success = {Type = 'Success', Text = name .. ' ✓'},
+        Error   = {Type = 'Error',   Text = name .. ' ✖'},
+        Warning = {Type = 'Warning', Text = name .. ' !'},
+        Info    = {Type = 'Info',    Text = name}
+    }
+    local entry = mapping[status] or mapping.Info
+    self:Notify({ Text = entry.Text, Type = entry.Type, Duration = duration })
+end
+
 -- Imgur Image Loader
 function StoppedUI:LoadImgurImage(hash)
     if self._imgCache[hash] then
@@ -229,7 +251,7 @@ function StoppedUI:Create(config)
     self.MaxNotifications = config.MaxNotifications or 6
     self.NotificationBellImgurHash = config.NotificationBellImgurHash or "3926305904"
     self.Locale = config.Locale or "en"
-    self.ShowPreview = config.ShowPreview == nil and true or config.ShowPreview
+    self.ShowPreview = config.ShowPreview == nil and false or config.ShowPreview
     
     self._imgCache = {}
     self._keybinds = {}
@@ -240,7 +262,8 @@ function StoppedUI:Create(config)
     self._notificationPanelConn = nil
     self._recentNotif = {}
     self._allConnections = {}
-    
+    self._translatedElements = {}
+
     if not self.FallbackImages then
         self.FallbackImages = {"https://i.imgur.com/placeholder.png"}
     end
@@ -520,6 +543,20 @@ function StoppedUI:Create(config)
 end
 
 function StoppedUI:CreateNotificationBell()
+    -- Create a separate ScreenGui for notifications to remain visible even when the main menu is toggled
+    self.NotifyGui = Instance.new("ScreenGui")
+    self.NotifyGui.Name = "StoppedUI_Notify_" .. math.random(1000,9999)
+    self.NotifyGui.ResetOnSpawn = false
+    self.NotifyGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    if gethui then
+        self.NotifyGui.Parent = gethui()
+    elseif syn and syn.protect_gui then
+        syn.protect_gui(self.NotifyGui)
+        self.NotifyGui.Parent = game:GetService("CoreGui")
+    else
+        self.NotifyGui.Parent = game:GetService("CoreGui")
+    end
+
     local bellContainer = Instance.new("Frame")
     bellContainer.Name = "NotificationBellContainer"
     bellContainer.Size = UDim2.new(0, 60, 0, 60)
@@ -528,7 +565,7 @@ function StoppedUI:CreateNotificationBell()
     bellContainer.BackgroundColor3 = self.Theme.Secondary
     bellContainer.BorderSizePixel = 0
     bellContainer.ZIndex = 1000
-    bellContainer.Parent = self.ScreenGui
+    bellContainer.Parent = self.NotifyGui
     CreateRound(bellContainer, 10)
     CreateStroke(bellContainer, self.Theme.Border, 2)
     
@@ -583,7 +620,7 @@ function StoppedUI:CreateNotificationBell()
     panel.Visible = false
     panel.ZIndex = 1000
     panel.ClipsDescendants = true
-    panel.Parent = self.ScreenGui
+    panel.Parent = self.NotifyGui
     CreateRound(panel, 8)
     CreateStroke(panel, self.Theme.Border)
     CreatePadding(panel, 6)
@@ -1049,6 +1086,7 @@ function StoppedUI:CreateConfigTab()
         Default = self.Locale == "pt" and "Português (BR)" or "English",
         Callback = function(value)
             self.Locale = value == "Português (BR)" and "pt" or "en"
+            self:ApplyTranslations()
             self:Notify({
                 Key = "ConfigSaved",
                 ImageHash = "7733955511",
@@ -1365,6 +1403,7 @@ function StoppedUI:CreateToggle(tab, options)
     label.Size = UDim2.new(1, -60, 1, 0)
     label.BackgroundTransparency = 1
     label.Text = name
+    if options.TranslationKey then table.insert(self._translatedElements, {Instance = label, Key = options.TranslationKey}) end
     label.TextColor3 = self.Theme.Text
     label.TextSize = 14
     label.Font = Enum.Font.Gotham
@@ -1402,7 +1441,14 @@ function StoppedUI:CreateToggle(tab, options)
         Tween(knob, {Position = toggle.Value and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)})
         
         local success, err = pcall(callback, toggle.Value)
-        if not success then
+        if success then
+            -- show a short notify stating the toggle changed
+            self:Notify({
+                Text = name .. (toggle.Value and " enabled" or " disabled"),
+                Type = toggle.Value and "Success" or "Info",
+                Duration = 2
+            })
+        else
             self:Notify({
                 Text = self:Tr("ErrorOccurred") .. " " .. name .. "\n" .. tostring(err),
                 Type = "Error",
@@ -1537,6 +1583,9 @@ function StoppedUI:CreateButton(tab, options)
     container.BackgroundColor3 = self.Theme.Accent
     container.BorderSizePixel = 0
     container.Text = name
+    if options.TranslationKey then table.insert(self._translatedElements, {Instance = container, Key = options.TranslationKey}) end
+    container.TextXAlignment = Enum.TextXAlignment.Center
+    container.TextYAlignment = Enum.TextYAlignment.Center
     container.TextColor3 = Color3.fromRGB(255, 255, 255)
     container.TextSize = 14
     container.Font = Enum.Font.GothamBold
@@ -1592,6 +1641,7 @@ function StoppedUI:CreateKeybind(tab, options)
     label.Size = UDim2.new(1, -110, 1, 0)
     label.BackgroundTransparency = 1
     label.Text = name
+    if options.TranslationKey then table.insert(self._translatedElements, {Instance = label, Key = options.TranslationKey}) end
     label.TextColor3 = self.Theme.Text
     label.TextSize = 14
     label.Font = Enum.Font.Gotham
@@ -1704,6 +1754,7 @@ function StoppedUI:CreateDropdown(tab, options)
     label.Size = UDim2.new(1, -120, 1, 0)
     label.BackgroundTransparency = 1
     label.Text = name
+    if options.TranslationKey then table.insert(self._translatedElements, {Instance = label, Key = options.TranslationKey}) end
     label.TextColor3 = self.Theme.Text
     label.TextSize = 14
     label.Font = Enum.Font.GothamBold
@@ -1845,6 +1896,7 @@ function StoppedUI:CreateLabel(tab, options)
     label.Size = UDim2.new(1, 0, 1, 0)
     label.BackgroundTransparency = 1
     label.Text = text
+    if options.TranslationKey then table.insert(self._translatedElements, {Instance = label, Key = options.TranslationKey}) end
     label.TextColor3 = self.Theme.TextDim
     label.TextSize = 13
     label.Font = Enum.Font.Gotham
@@ -1882,6 +1934,11 @@ function StoppedUI:Destroy()
     -- Destroy the ScreenGui and all children
     if self.ScreenGui and self.ScreenGui.Parent then
         pcall(function() self.ScreenGui:Destroy() end)
+    end
+
+    -- Destroy the NotifyGui and all children
+    if self.NotifyGui and self.NotifyGui.Parent then
+        pcall(function() self.NotifyGui:Destroy() end)
     end
     
     -- Clear references
