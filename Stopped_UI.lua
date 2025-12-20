@@ -1,23 +1,6 @@
---[[
-    StoppedUI - Dynamic Cheat Menu Library
-    Version: 4.0.0 - Enhanced Edition
-    
-    Features:
-    ✓ Fixed notification bell (top-left corner, outside menu)
-    ✓ Imgur-first image loading with fallback
-    ✓ PT-BR / EN translation system
-    ✓ Adaptive config system (no hardcoded options)
-    ✓ Config codes (save/load via codes)
-    ✓ User display name in menu
-    ✓ Maximum performance optimization
-    ✓ Easy integration for any developer
-    ✓ Responsive to screen size
-    ✓ Notification with image + text layout
-]]
-
 local StoppedUI = {}
 StoppedUI.__index = StoppedUI
-StoppedUI.Version = "4.0.0"
+StoppedUI.Version = "4.0.1"
 
 -- Services
 local TweenService = game:GetService("TweenService")
@@ -45,22 +28,17 @@ StoppedUI.Themes = {
 -- Translation System
 StoppedUI.Translations = {
     en = {
-        -- UI Elements
         Close = "Close",
         Preview = "Preview",
         Mode = "Mode:",
         Players = "Players",
         Vehicles = "Vehicles",
         Username = "User:",
-        
-        -- Notifications
         Seatbelt = "Press 'C' to put on or remove seatbelt.",
         ConfigSaved = "Configuration saved successfully!",
         ConfigLoaded = "Configuration loaded successfully!",
         ConfigInvalid = "Invalid configuration code!",
         ConfigCopied = "Configuration code copied to clipboard!",
-        
-        -- Config Tab
         ConfigTab = "Configs",
         SaveConfig = "Save Config",
         LoadConfig = "Load Config",
@@ -68,29 +46,25 @@ StoppedUI.Translations = {
         ConfigCode = "Config Code",
         PasteCode = "Paste Code Here",
         Language = "Language",
-        
-        -- Errors
+        ShowPreview = "Show Preview",
         ErrorOccurred = "An error occurred:",
         InvalidKey = "Invalid key:",
-        KeyConflict = "Keybind conflict! Key already in use.",
+        KeyConflict = "Keybind conflict! Key already in use by:",
+        ClipboardEmpty = "Clipboard is empty!",
+        ClipboardNotSupported = "getclipboard() not supported",
     },
     pt = {
-        -- UI Elements
         Close = "Fechar",
         Preview = "Visualização",
         Mode = "Modo:",
         Players = "Jogadores",
         Vehicles = "Veículos",
         Username = "Usuário:",
-        
-        -- Notifications
         Seatbelt = "Pressione 'C' para colocar ou tirar o cinto de segurança.",
         ConfigSaved = "Configuração salva com sucesso!",
         ConfigLoaded = "Configuração carregada com sucesso!",
         ConfigInvalid = "Código de configuração inválido!",
         ConfigCopied = "Código de configuração copiado!",
-        
-        -- Config Tab
         ConfigTab = "Configurações",
         SaveConfig = "Salvar Config",
         LoadConfig = "Carregar Config",
@@ -98,11 +72,12 @@ StoppedUI.Translations = {
         ConfigCode = "Código da Config",
         PasteCode = "Cole o Código Aqui",
         Language = "Idioma",
-        
-        -- Errors
+        ShowPreview = "Mostrar Visualização",
         ErrorOccurred = "Ocorreu um erro:",
         InvalidKey = "Tecla inválida:",
-        KeyConflict = "Conflito de tecla! Tecla já está em uso.",
+        KeyConflict = "Conflito de tecla! Tecla já está em uso por:",
+        ClipboardEmpty = "Área de transferência vazia!",
+        ClipboardNotSupported = "getclipboard() não suportado",
     }
 }
 
@@ -150,7 +125,7 @@ function StoppedUI:Tr(key)
     return key
 end
 
--- Imgur Image Loader com suporte a extensões (FIX #5)
+-- Imgur Image Loader
 function StoppedUI:LoadImgurImage(hash)
     if self._imgCache[hash] then
         return self._imgCache[hash]
@@ -164,7 +139,6 @@ function StoppedUI:LoadImgurImage(hash)
     
     local chosen = candidates[1]
     
-    -- validação opcional via request
     if request then
         for _, url in ipairs(candidates) do
             local ok, resp = pcall(function()
@@ -181,7 +155,70 @@ function StoppedUI:LoadImgurImage(hash)
     return chosen
 end
 
--- Main UI Creation (CORRIGIDO: Container.AnchorPoint, ShowPreview, Toggle)
+-- SetImageFromImgur
+function StoppedUI:SetImageFromImgur(target, hashOrUrl, preferredFallback)
+    if not target then return end
+    
+    local function chooseFallback()
+        if preferredFallback and type(preferredFallback) == "string" then
+            return preferredFallback
+        end
+        if self.FallbackImages and #self.FallbackImages > 0 then
+            return self.FallbackImages[1]
+        end
+        return nil
+    end
+    
+    local function applyUrl(url)
+        if not url then
+            target.Image = ""
+            target.ImageTransparency = 1
+            return
+        end
+        if not url:match("^https?://") then
+            local final = self:LoadImgurImage(url) or ("https://i.imgur.com/" .. url .. ".png")
+            target.Image = final
+        else
+            target.Image = url
+        end
+    end
+    
+    local function validateAndApply(urls)
+        for _, u in ipairs(urls) do
+            if request then
+                local ok, resp = pcall(function()
+                    return request({Url = u, Method = "HEAD", Timeout = 4})
+                end)
+                if ok and resp and (resp.StatusCode == 200 or resp.StatusCode == 0) then
+                    applyUrl(u)
+                    return
+                end
+            else
+                applyUrl(u)
+                return
+            end
+        end
+        applyUrl(chooseFallback())
+    end
+    
+    if not hashOrUrl or hashOrUrl == "" then
+        applyUrl(chooseFallback())
+        return
+    end
+    
+    if hashOrUrl:match("^https?://") then
+        validateAndApply({hashOrUrl})
+    else
+        local cands = {
+            string.format("https://i.imgur.com/%s.png", hashOrUrl),
+            string.format("https://i.imgur.com/%s.jpg", hashOrUrl),
+            string.format("https://i.imgur.com/%s.gif", hashOrUrl)
+        }
+        validateAndApply(cands)
+    end
+end
+
+-- Main UI Creation
 function StoppedUI:Create(config)
     local self = setmetatable({}, StoppedUI)
     
@@ -192,14 +229,21 @@ function StoppedUI:Create(config)
     self.MaxNotifications = config.MaxNotifications or 6
     self.NotificationBellImgurHash = config.NotificationBellImgurHash or "3926305904"
     self.Locale = config.Locale or "en"
-    self.ShowPreview = config.ShowPreview == nil and true or config.ShowPreview -- (FIX #4)
+    self.ShowPreview = config.ShowPreview == nil and true or config.ShowPreview
     
     self._imgCache = {}
     self._keybinds = {}
     self._notificationPool = {}
     self._configs = {}
     self._configCallbacks = {}
-    self._dropdownRenderConnections = {} -- (FIX #1)
+    self._dropdownRenderConnections = {}
+    self._notificationPanelConn = nil
+    self._recentNotif = {}
+    self._allConnections = {}
+    
+    if not self.FallbackImages then
+        self.FallbackImages = {"https://i.imgur.com/placeholder.png"}
+    end
     
     -- Create ScreenGui
     self.ScreenGui = Instance.new("ScreenGui")
@@ -216,15 +260,14 @@ function StoppedUI:Create(config)
         self.ScreenGui.Parent = game:GetService("CoreGui")
     end
     
-    -- === NOTIFICATION BELL ===
     self:CreateNotificationBell()
     
-    -- Main Container (CORRIGIDO: AnchorPoint = 0,0 para drag robusto)
+    -- Main Container
     self.Container = Instance.new("Frame")
     self.Container.Name = "MainContainer"
     self.Container.Size = UDim2.new(0, 800, 0, 550)
-    self.Container.Position = UDim2.new(0, 200, 0, 150) -- pixel offsets, não scale
-    self.Container.AnchorPoint = Vector2.new(0, 0) -- FIX #3: evita jump ao draggear
+    self.Container.Position = UDim2.new(0, 200, 0, 150)
+    self.Container.AnchorPoint = Vector2.new(0, 0)
     self.Container.BackgroundColor3 = self.Theme.Background
     self.Container.BorderSizePixel = 0
     self.Container.ClipsDescendants = true
@@ -232,7 +275,7 @@ function StoppedUI:Create(config)
     CreateRound(self.Container, 12)
     CreateStroke(self.Container, self.Theme.Border, 2)
     
-    -- Drop Shadow
+    -- Shadow
     local shadow = Instance.new("ImageLabel")
     shadow.Name = "Shadow"
     shadow.Size = UDim2.new(1, 40, 1, 40)
@@ -254,7 +297,6 @@ function StoppedUI:Create(config)
     self.Topbar.Parent = self.Container
     CreateRound(self.Topbar, 12)
     
-    -- Topbar Bottom Border
     local topbarBorder = Instance.new("Frame")
     topbarBorder.Size = UDim2.new(1, 0, 0, 2)
     topbarBorder.Position = UDim2.new(0, 0, 1, 0)
@@ -275,7 +317,7 @@ function StoppedUI:Create(config)
     self.Title.TextXAlignment = Enum.TextXAlignment.Left
     self.Title.Parent = self.Topbar
     
-    -- Logo/Icon
+    -- Logo
     local logo = Instance.new("ImageLabel")
     logo.Size = UDim2.new(0, 30, 0, 30)
     logo.Position = UDim2.new(0, 15, 0.5, 0)
@@ -292,7 +334,7 @@ function StoppedUI:Create(config)
         logo.Image = "rbxassetid://3944680095"
     end
     
-    -- Close Button (CORRIGIDO: esconder em vez de destruir)
+    -- Close Button
     local closeBtn = Instance.new("TextButton")
     closeBtn.Size = UDim2.new(0, 40, 0, 40)
     closeBtn.Position = UDim2.new(1, -45, 0.5, 0)
@@ -314,7 +356,6 @@ function StoppedUI:Create(config)
         Tween(closeBtn, {BackgroundColor3 = self.Theme.Secondary}, 0.2)
     end)
     
-    -- FIX #2: Toggle em vez de Destroy
     closeBtn.MouseButton1Click:Connect(function()
         Tween(self.Container, {Size = UDim2.new(0, 0, 0, 0)}, 0.35)
         Tween(self.Container, {BackgroundTransparency = 1}, 0.35)
@@ -335,7 +376,7 @@ function StoppedUI:Create(config)
     self.Content.BackgroundTransparency = 1
     self.Content.Parent = self.Container
     
-    -- Top Tab Bar (horizontal)
+    -- Top Tab Bar
     self.TopTabBar = Instance.new("Frame")
     self.TopTabBar.Size = UDim2.new(1, -20, 0, 50)
     self.TopTabBar.Position = UDim2.new(0, 10, 0, 10)
@@ -355,7 +396,7 @@ function StoppedUI:Create(config)
     
     self.TabButtonContainer = tabsRow
     
-    -- Left Pane (controls)
+    -- Left Pane
     self.LeftPane = Instance.new("ScrollingFrame")
     self.LeftPane.Name = "LeftPane"
     self.LeftPane.Size = UDim2.new(0, 350, 1, -70)
@@ -372,19 +413,18 @@ function StoppedUI:Create(config)
     leftLayout.SortOrder = Enum.SortOrder.LayoutOrder
     leftLayout.Parent = self.LeftPane
     
-    -- Preview Pane (right side)
+    -- Preview Pane
     self.PreviewPane = Instance.new("Frame")
     self.PreviewPane.Name = "PreviewPane"
     self.PreviewPane.Size = UDim2.new(1, -380, 1, -70)
     self.PreviewPane.Position = UDim2.new(0, 370, 0, 70)
     self.PreviewPane.BackgroundColor3 = self.Theme.Background
     self.PreviewPane.BorderSizePixel = 0
-    self.PreviewPane.Visible = self.ShowPreview -- FIX #4
+    self.PreviewPane.Visible = self.ShowPreview
     self.PreviewPane.Parent = self.Content
     CreateRound(self.PreviewPane, 8)
     CreateStroke(self.PreviewPane, self.Theme.Border)
     
-    -- Preview Canvas
     local previewCanvas = Instance.new("Frame")
     previewCanvas.Name = "PreviewCanvas"
     previewCanvas.Size = UDim2.new(1, -20, 1, -60)
@@ -407,7 +447,6 @@ function StoppedUI:Create(config)
     
     self.PreviewCanvas = previewCanvas
     
-    -- Preview Footer (Players/Vehicles selector)
     local previewFooter = Instance.new("Frame")
     previewFooter.Size = UDim2.new(1, -20, 0, 40)
     previewFooter.Position = UDim2.new(0, 10, 1, -50)
@@ -445,7 +484,7 @@ function StoppedUI:Create(config)
         previewModeBtn.Text = self:Tr(self.PreviewMode)
     end)
     
-    -- Footer (Username display)
+    -- Footer
     local footer = Instance.new("Frame")
     footer.Name = "Footer"
     footer.Size = UDim2.new(1, -20, 0, 38)
@@ -466,34 +505,26 @@ function StoppedUI:Create(config)
     usernameLabel.TextXAlignment = Enum.TextXAlignment.Left
     usernameLabel.Parent = footer
     
-    -- Tabs Storage
     self.Tabs = {}
     self.CurrentTab = nil
     self.Notifications = {}
     
-    -- Auto-create Config Tab
     self:CreateConfigTab()
-    
-    -- Make Draggable
     self:MakeDraggable()
-    
-    -- Responsive resize handler
     self:SetupResponsiveness()
     
-    -- Entrance Animation
     self.Container.Size = UDim2.new(0, 0, 0, 0)
     Tween(self.Container, {Size = UDim2.new(0, 800, 0, 550)}, 0.5)
     
     return self
 end
 
--- Fixed Notification Bell (Top-Left Corner)
 function StoppedUI:CreateNotificationBell()
-    -- Container for bell (fixed position, responsive)
     local bellContainer = Instance.new("Frame")
     bellContainer.Name = "NotificationBellContainer"
     bellContainer.Size = UDim2.new(0, 60, 0, 60)
-    bellContainer.Position = UDim2.new(0, 15, 0, 15)
+    bellContainer.AnchorPoint = Vector2.new(1, 0)
+    bellContainer.Position = UDim2.new(1, -15, 0, 15)
     bellContainer.BackgroundColor3 = self.Theme.Secondary
     bellContainer.BorderSizePixel = 0
     bellContainer.ZIndex = 1000
@@ -501,7 +532,6 @@ function StoppedUI:CreateNotificationBell()
     CreateRound(bellContainer, 10)
     CreateStroke(bellContainer, self.Theme.Border, 2)
     
-    -- Bell Icon (inside square)
     local bell = Instance.new("ImageButton")
     bell.Size = UDim2.new(0, 32, 0, 32)
     bell.Position = UDim2.new(0.5, 0, 0.5, 0)
@@ -510,29 +540,27 @@ function StoppedUI:CreateNotificationBell()
     bell.ImageColor3 = self.Theme.TextDim
     bell.Parent = bellContainer
     
-    -- Set bell icon (Imgur or fallback)
-    self:SetImageFromImgur(bell, self.NotificationBellImgurHash, "3926305904")
+    self:SetImageFromImgur(bell, self.NotificationBellImgurHash)
     
-    -- Badge (notification count)
     local badge = Instance.new("TextLabel")
     badge.Size = UDim2.new(0, 20, 0, 20)
-    badge.Position = UDim2.new(1, -8, 0, 4)
+    badge.AnchorPoint = Vector2.new(1, 0)
+    badge.Position = UDim2.new(1, -6, 0, -6)
     badge.BackgroundColor3 = self.Theme.Error
     badge.Text = "0"
-    badge.TextColor3 = Color3.fromRGB(255, 255, 255)
+    badge.TextColor3 = Color3.new(1, 1, 1)
     badge.TextSize = 11
     badge.Font = Enum.Font.GothamBold
     badge.BorderSizePixel = 0
     badge.Visible = false
     badge.ZIndex = 1001
-    badge.Parent = bell
+    badge.Parent = bellContainer
     CreateRound(badge, 10)
     
     self.NotificationBadge = badge
     self.NotificationBell = bell
     self.NotificationBellContainer = bellContainer
     
-    -- Hover effect
     bell.MouseEnter:Connect(function()
         Tween(bell, {ImageColor3 = self.Theme.Accent}, 0.2)
         Tween(bellContainer, {BackgroundColor3 = self.Theme.Background}, 0.2)
@@ -543,14 +571,14 @@ function StoppedUI:CreateNotificationBell()
         Tween(bellContainer, {BackgroundColor3 = self.Theme.Secondary}, 0.2)
     end)
     
-    -- Notification Panel (dropdown)
     local panel = Instance.new("ScrollingFrame")
     panel.Name = "NotificationPanel"
-    panel.Size = UDim2.new(0, 350, 0, 0)
-    panel.Position = UDim2.new(0, 80, 0, 15)
+    panel.Size = UDim2.new(0, 360, 0, 0)
+    panel.AnchorPoint = Vector2.new(1, 0)
+    panel.Position = UDim2.new(1, -15, 0, 80)
     panel.BackgroundColor3 = self.Theme.Secondary
     panel.BorderSizePixel = 0
-    panel.ScrollBarThickness = 4
+    panel.ScrollBarThickness = 6
     panel.ScrollBarImageColor3 = self.Theme.Accent
     panel.Visible = false
     panel.ZIndex = 1000
@@ -558,32 +586,42 @@ function StoppedUI:CreateNotificationBell()
     panel.Parent = self.ScreenGui
     CreateRound(panel, 8)
     CreateStroke(panel, self.Theme.Border)
-    CreatePadding(panel, 5)
+    CreatePadding(panel, 6)
     
     local panelList = Instance.new("UIListLayout")
-    panelList.Padding = UDim.new(0, 5)
+    panelList.Padding = UDim.new(0, 6)
     panelList.SortOrder = Enum.SortOrder.LayoutOrder
     panelList.Parent = panel
     
     self.NotificationPanel = panel
+    self.NotificationPanelList = panelList
     
-    -- Toggle panel
+    local posConn = RunService.RenderStepped:Connect(function()
+        if panel and panel.Parent and panel.Visible then
+            local contentHeight = panelList.AbsoluteContentSize.Y + 16
+            local maxHeight = math.min(450, workspace.CurrentCamera.ViewportSize.Y * 0.7)
+            panel.Size = UDim2.new(0, 360, 0, math.min(maxHeight, contentHeight))
+            panel.CanvasSize = UDim2.new(0, 0, 0, contentHeight)
+        end
+    end)
+    self._notificationPanelConn = posConn
+    table.insert(self._allConnections, posConn)
+    
     bell.MouseButton1Click:Connect(function()
         panel.Visible = not panel.Visible
         if panel.Visible then
+            local contentHeight = panelList.AbsoluteContentSize.Y + 16
             local maxHeight = math.min(450, workspace.CurrentCamera.ViewportSize.Y * 0.7)
-            Tween(panel, {Size = UDim2.new(0, 350, 0, maxHeight)}, 0.3)
+            Tween(panel, {Size = UDim2.new(0, 360, 0, math.min(maxHeight, contentHeight))}, 0.28)
         else
-            Tween(panel, {Size = UDim2.new(0, 350, 0, 0)}, 0.3)
+            Tween(panel, {Size = UDim2.new(0, 360, 0, 0)}, 0.22)
         end
     end)
 end
 
--- Enhanced Notification System
 function StoppedUI:Notify(options)
     options = options or {}
     
-    -- Support translation keys
     local text = options.Text
     if options.Key then
         text = self:Tr(options.Key)
@@ -602,7 +640,25 @@ function StoppedUI:Notify(options)
         Error = self.Theme.Error
     }
     
-    -- Limit max notifications
+    local window = 3
+    if options.Key and self._recentNotif[options.Key] then
+        local recent = self._recentNotif[options.Key]
+        if tick() - recent.t < window then
+            recent.count = recent.count + 1
+            if recent.notif and recent.notif.Parent then
+                local label = recent.notif:FindFirstChild("TextContainer"):FindFirstChild("Label")
+                if label then
+                    label.Text = text .. " (x" .. recent.count .. ")"
+                end
+            end
+            return
+        end
+    end
+    
+    if options.Key then
+        self._recentNotif[options.Key] = { t = tick(), count = 1 }
+    end
+    
     if #self.Notifications >= self.MaxNotifications then
         local oldest = table.remove(self.Notifications, 1)
         if oldest and oldest.Parent then
@@ -611,7 +667,6 @@ function StoppedUI:Notify(options)
         end
     end
     
-    -- Reuse notification from pool or create new
     local notif = table.remove(self._notificationPool) or Instance.new("Frame")
     notif.Size = UDim2.new(1, -10, 0, 0)
     notif.AutomaticSize = Enum.AutomaticSize.Y
@@ -625,7 +680,6 @@ function StoppedUI:Notify(options)
         CreatePadding(notif, 10)
     end
     
-    -- Image (left side)
     local img = notif:FindFirstChild("NotifImage") or Instance.new("ImageLabel")
     img.Name = "NotifImage"
     img.Size = UDim2.new(0, 48, 0, 48)
@@ -637,7 +691,6 @@ function StoppedUI:Notify(options)
     
     self:SetImageFromImgur(img, imgHash, "3944680095")
     
-    -- Text container (right side)
     local textContainer = notif:FindFirstChild("TextContainer") or Instance.new("Frame")
     textContainer.Name = "TextContainer"
     textContainer.Size = UDim2.new(1, -60, 0, 0)
@@ -676,7 +729,6 @@ function StoppedUI:Notify(options)
     subLabel.Visible = subText ~= ""
     subLabel.Parent = textContainer
     
-    -- Progress bar
     local progress = notif:FindFirstChild("Progress") or Instance.new("Frame")
     progress.Name = "Progress"
     progress.Size = UDim2.new(1, 0, 0, 3)
@@ -686,7 +738,6 @@ function StoppedUI:Notify(options)
     progress.BorderSizePixel = 0
     progress.Parent = notif
     
-    -- Animation
     notif.BackgroundTransparency = 1
     label.TextTransparency = 1
     img.ImageTransparency = 1
@@ -699,27 +750,35 @@ function StoppedUI:Notify(options)
     end
     
     table.insert(self.Notifications, notif)
+    
+    if options.Key then
+        self._recentNotif[options.Key].notif = notif
+    end
+    
     self.NotificationBadge.Text = tostring(#self.Notifications)
     self.NotificationBadge.Visible = true
     
-    -- Pulse badge
     task.spawn(function()
         Tween(self.NotificationBadge, {Size = UDim2.new(0, 24, 0, 24)}, 0.2)
         task.wait(0.2)
         Tween(self.NotificationBadge, {Size = UDim2.new(0, 20, 0, 20)}, 0.2)
     end)
     
-    -- Progress countdown
     task.spawn(function()
-        local start = tick()
-        while notif.Parent and tick() - start < duration do
-            local t = (tick() - start) / duration
-            progress.Size = UDim2.new(1 - t, 0, 0, 3)
-            task.wait(0.05)
-        end
+        local t0 = tick()
+        local t1 = t0 + duration
+        local conn
+        conn = RunService.RenderStepped:Connect(function()
+            if tick() >= t1 or not progress.Parent then
+                progress.Size = UDim2.new(0, 0, 0, 3)
+                if conn then conn:Disconnect() end
+                return
+            end
+            local pct = 1 - ((tick() - t0) / duration)
+            progress.Size = UDim2.new(pct, 0, 0, 3)
+        end)
     end)
     
-    -- Auto remove
     task.delay(duration, function()
         if not notif.Parent then return end
         
@@ -748,41 +807,45 @@ function StoppedUI:Notify(options)
     end)
 end
 
--- Responsive UI Handler
 function StoppedUI:SetupResponsiveness()
     local camera = workspace.CurrentCamera
     
-    camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+    local function updateResponsive()
         local viewportSize = camera.ViewportSize
         
-        -- Scale notification bell
-        local scale = math.min(1, viewportSize.Y / 800)
-        local bellSize = math.floor(60 * scale)
+        local function computeBadgeSize(viewportY)
+            local base = 60
+            local scale = math.clamp(viewportY / 720, 0.8, 1.5)
+            return math.floor(base * scale)
+        end
+        
+        local bellSize = computeBadgeSize(viewportSize.Y)
         self.NotificationBellContainer.Size = UDim2.new(0, bellSize, 0, bellSize)
         
-        -- Adjust notification panel
         if self.NotificationPanel then
             local maxHeight = math.min(450, viewportSize.Y * 0.7)
             if self.NotificationPanel.Visible then
-                self.NotificationPanel.Size = UDim2.new(0, 350, 0, maxHeight)
+                local contentHeight = self.NotificationPanelList.AbsoluteContentSize.Y + 16
+                self.NotificationPanel.Size = UDim2.new(0, 360, 0, math.min(maxHeight, contentHeight))
             end
         end
         
-        -- Clamp menu position
         local containerSize = self.Container.AbsoluteSize
         local containerPos = self.Container.AbsolutePosition
         
         if containerPos.X + containerSize.X > viewportSize.X then
-            self.Container.Position = UDim2.new(0, viewportSize.X - containerSize.X - 10, self.Container.Position.Y.Scale, self.Container.Position.Y.Offset)
+            self.Container.Position = UDim2.new(0, viewportSize.X - containerSize.X - 10, 0, self.Container.Position.Y.Offset)
         end
         
         if containerPos.Y + containerSize.Y > viewportSize.Y then
-            self.Container.Position = UDim2.new(self.Container.Position.X.Scale, self.Container.Position.X.Offset, 0, viewportSize.Y - containerSize.Y - 10)
+            self.Container.Position = UDim2.new(0, self.Container.Position.X.Offset, 0, viewportSize.Y - containerSize.Y - 10)
         end
-    end)
+    end
+    
+    local conn = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateResponsive)
+    table.insert(self._allConnections, conn)
 end
 
--- Toggle Menu via Keybind (FIX #2)
 function StoppedUI:Toggle()
     if not self.ScreenGui then return end
     if self.ScreenGui.Enabled then
@@ -796,7 +859,6 @@ function StoppedUI:Toggle()
     end
 end
 
--- Make UI Draggable (FIX #3: robusto, baseado em AbsolutePosition)
 function StoppedUI:MakeDraggable()
     local dragging = false
     local dragStartPos = Vector2.new(0, 0)
@@ -811,7 +873,7 @@ function StoppedUI:MakeDraggable()
         end
     end
 
-    self.Topbar.InputBegan:Connect(function(input)
+    local conn1 = self.Topbar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
             dragStartPos = input.Position
@@ -838,17 +900,21 @@ function StoppedUI:MakeDraggable()
 
                 self.Container.Position = UDim2.new(0, newPos.X, 0, newPos.Y)
             end)
+            table.insert(self._allConnections, dragConn)
         end
     end)
+    
+    table.insert(self._allConnections, conn1)
 
-    UserInputService.InputEnded:Connect(function(input)
+    local conn2 = UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             stopDrag()
         end
     end)
+    
+    table.insert(self._allConnections, conn2)
 end
 
--- Create Tab
 function StoppedUI:CreateTab(config)
     config = config or {}
     local tabName = config.Name or "Tab"
@@ -860,7 +926,6 @@ function StoppedUI:CreateTab(config)
         Container = nil
     }
     
-    -- Tab Button
     local tabBtn = Instance.new("TextButton")
     tabBtn.Name = tabName
     tabBtn.Size = UDim2.new(0, 120, 1, 0)
@@ -895,7 +960,6 @@ function StoppedUI:CreateTab(config)
         tab.Icon = iconImg
     end
     
-    -- Tab Content Container
     local content = Instance.new("Frame")
     content.Name = tabName .. "_Content"
     content.Size = UDim2.new(1, -10, 0, 0)
@@ -913,7 +977,6 @@ function StoppedUI:CreateTab(config)
     
     tab.Container = content
     
-    -- Hover effect
     tabBtn.MouseEnter:Connect(function()
         if self.CurrentTab ~= tab then
             Tween(tabBtn, {BackgroundColor3 = self.Theme.Secondary}, 0.2)
@@ -926,7 +989,6 @@ function StoppedUI:CreateTab(config)
         end
     end)
     
-    -- Tab Selection
     tabBtn.MouseButton1Click:Connect(function()
         for _, t in pairs(self.Tabs) do
             t.Container.Visible = false
@@ -952,8 +1014,7 @@ function StoppedUI:CreateTab(config)
         self.CurrentTab = tab
     end)
     
-    -- Auto-select first tab (skip config tab)
-    if #self.Tabs == 1 then -- 0 is config, 1 is first user tab
+    if #self.Tabs == 1 then
         tabBtn.BackgroundColor3 = self.Theme.Accent
         tabLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
         if tab.Icon then
@@ -965,20 +1026,16 @@ function StoppedUI:CreateTab(config)
     
     table.insert(self.Tabs, tab)
     
-    -- Element Creation Methods
     tab.CreateToggle = function(_, opts) return self:CreateToggle(tab, opts) end
     tab.CreateSlider = function(_, opts) return self:CreateSlider(tab, opts) end
     tab.CreateButton = function(_, opts) return self:CreateButton(tab, opts) end
     tab.CreateKeybind = function(_, opts) return self:CreateKeybind(tab, opts) end
-    tab.CreateColorPicker = function(_, opts) return self:CreateColorPicker(tab, opts) end
     tab.CreateDropdown = function(_, opts) return self:CreateDropdown(tab, opts) end
     tab.CreateLabel = function(_, opts) return self:CreateLabel(tab, opts) end
-    tab.CreateKeySquare = function(_, opts) return self:CreateKeySquare(tab, opts) end
     
     return tab
 end
 
--- Config Tab (FIX #4: adicionar toggle para Preview)
 function StoppedUI:CreateConfigTab()
     local configTab = self:CreateTab({
         Name = self:Tr("ConfigTab"),
@@ -1003,9 +1060,9 @@ function StoppedUI:CreateConfigTab()
     
     configTab:CreateLabel({ Text = "─────────────────" })
     
-    -- FIX #4: Preview Toggle
+    -- Preview Toggle
     local previewToggle = configTab:CreateToggle({
-        Name = "Show Preview",
+        Name = self:Tr("ShowPreview"),
         Default = self.ShowPreview,
         Callback = function(value)
             self.ShowPreview = value
@@ -1016,9 +1073,6 @@ function StoppedUI:CreateConfigTab()
     })
     
     configTab:CreateLabel({ Text = "─────────────────" })
-    
-    -- Config Name Input
-    local configNameInput = configTab:CreateLabel({ Text = self:Tr("ConfigName") .. ": default" })
     
     -- Save Config Button
     configTab:CreateButton({
@@ -1049,8 +1103,6 @@ function StoppedUI:CreateConfigTab()
     configTab:CreateLabel({ Text = "─────────────────" })
     
     -- Load Config via Code
-    local codeInput = configTab:CreateLabel({ Text = self:Tr("PasteCode") })
-    
     configTab:CreateButton({
         Name = self:Tr("LoadConfig"),
         Callback = function()
@@ -1068,7 +1120,7 @@ function StoppedUI:CreateConfigTab()
                     end
                 else
                     self:Notify({
-                        Text = "Clipboard is empty!",
+                        Key = "ClipboardEmpty",
                         ImageHash = "7733955511",
                         Duration = 3,
                         Type = "Warning"
@@ -1076,7 +1128,7 @@ function StoppedUI:CreateConfigTab()
                 end
             else
                 self:Notify({
-                    Text = "getclipboard() not supported",
+                    Key = "ClipboardNotSupported",
                     ImageHash = "7733955511",
                     Duration = 3,
                     Type = "Error"
@@ -1086,21 +1138,8 @@ function StoppedUI:CreateConfigTab()
     })
 end
 
--- Adaptive Config System
+-- Adaptive Config System (CONSOLIDADO - ÚNICA VERSÃO)
 function StoppedUI:RegisterConfigCallback(identifier, saveFunc, loadFunc)
-    --[[
-        Example usage by developers:
-        
-        ui:RegisterConfigCallback("MyFeature", 
-            function() 
-                return { enabled = myFeatureEnabled, value = myValue } 
-            end,
-            function(data) 
-                myFeatureEnabled = data.enabled 
-                myValue = data.value 
-            end
-        )
-    ]]
     self._configCallbacks[identifier] = {
         Save = saveFunc,
         Load = loadFunc
@@ -1113,6 +1152,7 @@ function StoppedUI:SaveConfig(name)
         Name = name,
         Version = self.Version,
         Locale = self.Locale,
+        ShowPreview = self.ShowPreview,
         Tabs = {},
         Custom = {}
     }
@@ -1203,6 +1243,14 @@ function StoppedUI:LoadConfig(nameOrJson)
         self.Locale = config.Locale
     end
     
+    -- Load ShowPreview
+    if config.ShowPreview ~= nil then
+        self.ShowPreview = config.ShowPreview
+        if self.PreviewPane then
+            self.PreviewPane.Visible = config.ShowPreview
+        end
+    end
+    
     -- Load tabs and elements
     for _, tabConfig in pairs(config.Tabs or {}) do
         local tab = nil
@@ -1250,12 +1298,12 @@ function StoppedUI:LoadConfig(nameOrJson)
     return true
 end
 
--- Preview Draw Function
+-- Preview Draw Function (MELHORADO)
 function StoppedUI:PreviewDraw(lines)
     local canvas = self.PreviewCanvas
     
     for _, child in pairs(canvas:GetChildren()) do
-        if child.Name ~= "PreviewLabel" and (child:IsA("Frame") or child:IsA("TextLabel")) then
+        if child.Name ~= "PreviewLabel" and not child:IsA("UIListLayout") then
             child:Destroy()
         end
     end
@@ -1280,12 +1328,18 @@ function StoppedUI:PreviewDraw(lines)
             label.TextSize = line.textSize or 12
             label.TextXAlignment = Enum.TextXAlignment.Left
             label.Parent = canvas
+            
+        elseif line.type == "box" then
+            local box = Instance.new("Frame")
+            box.Size = UDim2.new(0, line.width or 100, 0, line.height or 100)
+            box.Position = UDim2.new(0, line.x or 10, 0, line.y or 40)
+            box.BackgroundTransparency = 1
+            box.BorderSizePixel = 0
+            box.Parent = canvas
+            CreateStroke(box, line.color or self.Theme.Success, line.thickness or 2)
         end
     end
 end
-
--- [Element Creation Functions - Toggle, Slider, Button, etc.]
--- (Keeping existing implementations for brevity - they remain the same)
 
 -- Toggle Element
 function StoppedUI:CreateToggle(tab, options)
@@ -1368,6 +1422,7 @@ function StoppedUI:CreateToggle(tab, options)
     return toggle
 end
 
+-- Slider Element
 function StoppedUI:CreateSlider(tab, options)
     options = options or {}
     local name = options.Name or "Slider"
@@ -1435,13 +1490,14 @@ function StoppedUI:CreateSlider(tab, options)
         end
     end)
     
-    UserInputService.InputEnded:Connect(function(input)
+    local conn = UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = false
         end
     end)
+    table.insert(self._allConnections, conn)
     
-    UserInputService.InputChanged:Connect(function(input)
+    local conn2 = UserInputService.InputChanged:Connect(function(input)
         if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
             if tick() - lastUpdate < debounceDelay then return end
             lastUpdate = tick()
@@ -1456,6 +1512,7 @@ function StoppedUI:CreateSlider(tab, options)
             pcall(callback, value)
         end
     end)
+    table.insert(self._allConnections, conn2)
     
     function slider:Set(value)
         slider.Value = Clamp(value, min, max)
@@ -1469,6 +1526,7 @@ function StoppedUI:CreateSlider(tab, options)
     return slider
 end
 
+-- Button Element
 function StoppedUI:CreateButton(tab, options)
     options = options or {}
     local name = options.Name or "Button"
@@ -1500,7 +1558,7 @@ function StoppedUI:CreateButton(tab, options)
     
     container.MouseButton1Click:Connect(function()
         Tween(container, {Size = UDim2.new(1, -12, 0, 43)}, 0.1)
-        wait(0.1)
+        task.wait(0.1)
         Tween(container, {Size = UDim2.new(1, -10, 0, 45)}, 0.1)
         
         pcall(callback)
@@ -1509,6 +1567,7 @@ function StoppedUI:CreateButton(tab, options)
     return container
 end
 
+-- Keybind Element (COM DETECÇÃO DE CONFLITO)
 function StoppedUI:CreateKeybind(tab, options)
     options = options or {}
     local name = options.Name or "Keybind"
@@ -1573,786 +1632,26 @@ function StoppedUI:CreateKeybind(tab, options)
         Tween(keyBox, {BackgroundColor3 = self.Theme.Warning:Lerp(self.Theme.Background, 0.8)}, 0.2)
     end)
     
-    UserInputService.InputBegan:Connect(function(input, gpe)
+    local conn = UserInputService.InputBegan:Connect(function(input, gpe)
         if keybind.Listening and input.UserInputType == Enum.UserInputType.Keyboard then
             local newKeyName = string.upper(tostring(input.KeyCode.Name))
             
-            keybind.Key = input.KeyCode
-            keyBox.Text = newKeyName
-            self._keybinds[name] = keybind
+            -- Verificar conflitos (NOVO)
+            local conflictName = nil
+            for bindName, bind in pairs(self._keybinds) do
+                if bind.Key == input.KeyCode and bindName ~= name then
+                    conflictName = bindName
+                    break
+                end
+            end
             
-            Tween(keyBox, {TextColor3 = self.Theme.Accent}, 0.2)
-            Tween(keyBox, {BackgroundColor3 = self.Theme.Background}, 0.2)
-            keybind.Listening = false
-            
-        elseif not gpe and not keybind.Listening and input.KeyCode == keybind.Key then
-            pcall(callback, keybind.Key)
-        end
-    end)
-    
-    function keybind:Set(key)
-        keybind.Key = key
-        keyBox.Text = string.upper(tostring(key.Name))
-        self._keybinds[name] = keybind
-    end
-    
-    self._keybinds[name] = keybind
-    table.insert(tab.Elements, keybind)
-    return keybind
-end
-
-function StoppedUI:CreateDropdown(tab, options)
-    options = options or {}
-    local name = options.Name or "Dropdown"
-    local items = options.Items or {"Option 1", "Option 2", "Option 3"}
-    local default = options.Default or items[1]
-    local callback = options.Callback or function() end
-    
-    local dropdown = {
-        Name = name,
-        Value = default,
-        Items = items
-    }
-    
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, -10, 0, 45)
-    container.BackgroundColor3 = self.Theme.Secondary
-    container.BorderSizePixel = 0
-    container.Parent = tab.Container
-    CreateRound(container, 8)
-    CreatePadding(container, 10)
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -120, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    label.TextColor3 = self.Theme.Text
-    label.TextSize = 14
-    label.Font = Enum.Font.GothamBold
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = container
-    
-    local button = Instance.new("TextButton")
-    button.Size = UDim2.new(0, 110, 0, 30)
-    button.Position = UDim2.new(1, -120, 0.5, 0)
-    button.AnchorPoint = Vector2.new(0, 0.5)
-    button.BackgroundColor3 = self.Theme.Background
-    button.Text = default .. " ▼"
-    button.TextColor3 = self.Theme.Accent
-    button.TextSize = 12
-    button.Font = Enum.Font.GothamBold
-    button.BorderSizePixel = 0
-    button.AutoButtonColor = false
-    button.Parent = container
-    CreateRound(button, 6)
-    CreateStroke(button, self.Theme.Border)
-    
-    -- FIX #1: listFrame é filho de ScreenGui, não container
-    local listFrame = Instance.new("Frame")
-    listFrame.Size = UDim2.new(0, 110, 0, #items * 35)
-    listFrame.BackgroundColor3 = self.Theme.Secondary
-    listFrame.BorderSizePixel = 0
-    listFrame.Visible = false
-    listFrame.ZIndex = 1005
-    listFrame.ClipsDescendants = true
-    listFrame.Parent = self.ScreenGui -- FIX #1: não é filha do container
-    CreateRound(listFrame, 6)
-    CreateStroke(listFrame, self.Theme.Border)
-    
-    local listLayout = Instance.new("UIListLayout")
-    listLayout.Padding = UDim.new(0, 2)
-    listLayout.Parent = listFrame
-    
-    -- FIX #1: atualizar posição via RenderStepped
-    local function updateListPosition()
-        local absPos = button.AbsolutePosition
-        local absSize = button.AbsoluteSize
-        local x = absPos.X
-        local y = absPos.Y + absSize.Y + 4
-        listFrame.Position = UDim2.new(0, x, 0, y)
-    end
-    
-    local posConn
-    local function startTracking()
-        if posConn then posConn:Disconnect() end
-        posConn = RunService.RenderStepped:Connect(function()
-            if listFrame.Visible then
-                updateListPosition()
-            end
-        end)
-        table.insert(self._dropdownRenderConnections, posConn)
-    end
-    
-    for _, item in ipairs(items) do
-        local itemBtn = Instance.new("TextButton")
-        itemBtn.Size = UDim2.new(1, -4, 0, 33)
-        itemBtn.BackgroundColor3 = self.Theme.Background
-        itemBtn.Text = item
-        itemBtn.TextColor3 = self.Theme.Text
-        itemBtn.TextSize = 12
-        itemBtn.Font = Enum.Font.Gotham
-        itemBtn.BorderSizePixel = 0
-        itemBtn.AutoButtonColor = false
-        itemBtn.Parent = listFrame
-        CreateRound(itemBtn, 4)
-        
-        itemBtn.MouseEnter:Connect(function()
-            Tween(itemBtn, {BackgroundColor3 = self.Theme.Accent}, 0.15)
-        end)
-        
-        itemBtn.MouseLeave:Connect(function()
-            Tween(itemBtn, {BackgroundColor3 = self.Theme.Background}, 0.15)
-        end)
-        
-        itemBtn.MouseButton1Click:Connect(function()
-            dropdown.Value = item
-            button.Text = item .. " ▼"
-            listFrame.Visible = false
-            pcall(callback, item)
-        end)
-    end
-    
-    button.MouseButton1Click:Connect(function()
-        listFrame.Visible = not listFrame.Visible
-        if listFrame.Visible then
-            startTracking()
-            updateListPosition()
-        end
-    end)
-    
-    -- FIX #9: fechar ao clicar fora
-    local function setupClickOutside()
-        local conn
-        conn = UserInputService.InputBegan:Connect(function(input, gpe)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 and listFrame.Visible then
-                local mouse = UserInputService:GetMouseLocation()
-                local inList = (mouse.X >= listFrame.AbsolutePosition.X and 
-                               mouse.X <= listFrame.AbsolutePosition.X + listFrame.AbsoluteSize.X and
-                               mouse.Y >= listFrame.AbsolutePosition.Y and 
-                               mouse.Y <= listFrame.AbsolutePosition.Y + listFrame.AbsoluteSize.Y)
-                
-                local inBtn = (mouse.X >= button.AbsolutePosition.X and 
-                              mouse.X <= button.AbsolutePosition.X + button.AbsoluteSize.X and
-                              mouse.Y >= button.AbsolutePosition.Y and 
-                              mouse.Y <= button.AbsolutePosition.Y + button.AbsoluteSize.Y)
-                
-                if not inList and not inBtn then
-                    listFrame.Visible = false
-                end
-            end
-        end)
-    end
-    setupClickOutside()
-    
-    function dropdown:Set(value)
-        dropdown.Value = value
-        button.Text = value .. " ▼"
-        pcall(callback, value)
-    end
-    
-    table.insert(tab.Elements, dropdown)
-    return dropdown
-end
-
--- Config Tab (FIX #4: adicionar toggle para Preview)
-function StoppedUI:CreateConfigTab()
-    local configTab = self:CreateTab({
-        Name = self:Tr("ConfigTab"),
-        Icon = "7733955511"
-    })
-    
-    -- Language Selector
-    local langDropdown = configTab:CreateDropdown({
-        Name = self:Tr("Language"),
-        Items = {"English", "Português (BR)"},
-        Default = self.Locale == "pt" and "Português (BR)" or "English",
-        Callback = function(value)
-            self.Locale = value == "Português (BR)" and "pt" or "en"
-            self:Notify({
-                Key = "ConfigSaved",
-                ImageHash = "7733955511",
-                Duration = 2,
-                Type = "Success"
-            })
-        end
-    })
-    
-    configTab:CreateLabel({ Text = "─────────────────" })
-    
-    -- FIX #4: Preview Toggle
-    local previewToggle = configTab:CreateToggle({
-        Name = "Show Preview",
-        Default = self.ShowPreview,
-        Callback = function(value)
-            self.ShowPreview = value
-            if self.PreviewPane then
-                self.PreviewPane.Visible = value
-            end
-        end
-    })
-    
-    configTab:CreateLabel({ Text = "─────────────────" })
-    
-    -- Config Name Input
-    local configNameInput = configTab:CreateLabel({ Text = self:Tr("ConfigName") .. ": default" })
-    
-    -- Save Config Button
-    configTab:CreateButton({
-        Name = self:Tr("SaveConfig"),
-        Callback = function()
-            local code = self:SaveConfig("default")
-            if code then
-                if setclipboard then
-                    setclipboard(code)
-                    self:Notify({
-                        Key = "ConfigCopied",
-                        ImageHash = "7733955511",
-                        Duration = 3,
-                        Type = "Success"
-                    })
-                else
-                    self:Notify({
-                        Text = "Config code: " .. code:sub(1, 50) .. "...",
-                        ImageHash = "7733955511",
-                        Duration = 5,
-                        Type = "Info"
-                    })
-                end
-            end
-        end
-    })
-    
-    configTab:CreateLabel({ Text = "─────────────────" })
-    
-    -- Load Config via Code
-    local codeInput = configTab:CreateLabel({ Text = self:Tr("PasteCode") })
-    
-    configTab:CreateButton({
-        Name = self:Tr("LoadConfig"),
-        Callback = function()
-            if getclipboard then
-                local code = getclipboard()
-                if code and #code > 0 then
-                    local success = self:LoadConfig(code)
-                    if not success then
-                        self:Notify({
-                            Key = "ConfigInvalid",
-                            ImageHash = "7733955511",
-                            Duration = 3,
-                            Type = "Error"
-                        })
-                    end
-                else
-                    self:Notify({
-                        Text = "Clipboard is empty!",
-                        ImageHash = "7733955511",
-                        Duration = 3,
-                        Type = "Warning"
-                    })
-                end
-            else
+            if conflictName then
                 self:Notify({
-                    Text = "getclipboard() not supported",
-                    ImageHash = "7733955511",
-                    Duration = 3,
-                    Type = "Error"
+                    Text = self:Tr("KeyConflict") .. " " .. conflictName,
+                    Type = "Warning",
+                    Duration = 4
                 })
             end
-        end
-    })
-end
-
--- Adaptive Config System
-function StoppedUI:RegisterConfigCallback(identifier, saveFunc, loadFunc)
-    --[[
-        Example usage by developers:
-        
-        ui:RegisterConfigCallback("MyFeature", 
-            function() 
-                return { enabled = myFeatureEnabled, value = myValue } 
-            end,
-            function(data) 
-                myFeatureEnabled = data.enabled 
-                myValue = data.value 
-            end
-        )
-    ]]
-    self._configCallbacks[identifier] = {
-        Save = saveFunc,
-        Load = loadFunc
-    }
-end
-
-function StoppedUI:SaveConfig(name)
-    name = name or "default"
-    local config = {
-        Name = name,
-        Version = self.Version,
-        Locale = self.Locale,
-        Tabs = {},
-        Custom = {}
-    }
-    
-    -- Save all tabs and elements
-    for _, tab in pairs(self.Tabs) do
-        local tabConfig = {
-            Name = tab.Name,
-            Elements = {}
-        }
-        
-        for _, element in pairs(tab.Elements) do
-            if element.Value ~= nil or element.Key ~= nil or element.Color ~= nil then
-                table.insert(tabConfig.Elements, {
-                    Name = element.Name,
-                    Value = element.Value,
-                    Key = element.Key,
-                    Color = element.Color
-                })
-            end
-        end
-        
-        table.insert(config.Tabs, tabConfig)
-    end
-    
-    -- Save custom developer data
-    for identifier, callbacks in pairs(self._configCallbacks) do
-        if callbacks.Save then
-            local success, data = pcall(callbacks.Save)
-            if success then
-                config.Custom[identifier] = data
-            else
-                warn("[StoppedUI] Config save error for '" .. identifier .. "':", data)
-            end
-        end
-    end
-    
-    local success, json = pcall(function()
-       
-        return HttpService:JSONEncode(config)
-    end)
-    
-    if success then
-        self._configs[name] = config
-        self:Notify({
-            Key = "ConfigSaved",
-            ImageHash = "7733955511",
-            Duration = 3,
-            Type = "Success"
-        })
-        return json
-    else
-        self:Notify({
-            Text = self:Tr("ErrorOccurred") .. " " .. tostring(json),
-            ImageHash = "7733955511",
-            Duration = 4,
-            Type = "Error"
-        })
-        return nil
-    end
-end
-
-function StoppedUI:LoadConfig(nameOrJson)
-    nameOrJson = nameOrJson or "default"
-    local config
-    
-    if self._configs[nameOrJson] then
-        config = self._configs[nameOrJson]
-    else
-        local success, decoded = pcall(function()
-            return HttpService:JSONDecode(nameOrJson)
-        end)
-        
-        if success then
-            config = decoded
-        else
-            self:Notify({
-                Key = "ConfigInvalid",
-                ImageHash = "7733955511",
-                Duration = 4,
-                Type = "Error"
-            })
-            return false
-        end
-    end
-    
-    -- Load locale
-    if config.Locale then
-        self.Locale = config.Locale
-    end
-    
-    -- Load tabs and elements
-    for _, tabConfig in pairs(config.Tabs or {}) do
-        local tab = nil
-        for _, t in pairs(self.Tabs) do
-            if t.Name == tabConfig.Name then
-                tab = t
-                break
-            end
-        end
-        
-        if tab then
-            for _, elementConfig in pairs(tabConfig.Elements or {}) do
-                for _, element in pairs(tab.Elements) do
-                    if element.Name == elementConfig.Name then
-                        if element.Set and elementConfig.Value ~= nil then
-                            element:Set(elementConfig.Value)
-                        elseif element.Set and elementConfig.Key ~= nil then
-                            element:Set(elementConfig.Key)
-                        elseif element.Set and elementConfig.Color ~= nil then
-                            element:Set(elementConfig.Color)
-                        end
-                    end
-                end
-            end
-        end
-    end
-    
-    -- Load custom developer data
-    for identifier, data in pairs(config.Custom or {}) do
-        if self._configCallbacks[identifier] and self._configCallbacks[identifier].Load then
-            local success, err = pcall(self._configCallbacks[identifier].Load, data)
-            if not success then
-                warn("[StoppedUI] Config load error for '" .. identifier .. "':", err)
-            end
-        end
-    end
-    
-    self:Notify({
-        Key = "ConfigLoaded",
-        ImageHash = "7733955511",
-        Duration = 3,
-        Type = "Success"
-    })
-    
-    return true
-end
-
--- Preview Draw Function
-function StoppedUI:PreviewDraw(lines)
-    local canvas = self.PreviewCanvas
-    
-    for _, child in pairs(canvas:GetChildren()) do
-        if child.Name ~= "PreviewLabel" and (child:IsA("Frame") or child:IsA("TextLabel")) then
-            child:Destroy()
-        end
-    end
-    
-    for i, line in ipairs(lines or {}) do
-        if line.type == "line" then
-            local bar = Instance.new("Frame")
-            bar.Size = UDim2.new(0, line.width or 2, 0, line.height or 120)
-            bar.Position = UDim2.new(0, line.x or 10, 0, line.y or 40)
-            bar.BackgroundColor3 = line.color or self.Theme.Success
-            bar.BorderSizePixel = 0
-            bar.Parent = canvas
-            
-        elseif line.type == "text" then
-            local label = Instance.new("TextLabel")
-            label.Size = UDim2.new(0, line.width or 100, 0, line.height or 20)
-            label.Position = UDim2.new(0, line.x or 10, 0, line.y or 10)
-            label.BackgroundTransparency = 1
-            label.Text = line.text or ""
-            label.TextColor3 = line.color or self.Theme.Success
-            label.Font = Enum.Font.Gotham
-            label.TextSize = line.textSize or 12
-            label.TextXAlignment = Enum.TextXAlignment.Left
-            label.Parent = canvas
-        end
-    end
-end
-
--- [Element Creation Functions - Toggle, Slider, Button, etc.]
--- (Keeping existing implementations for brevity - they remain the same)
-
--- Toggle Element
-function StoppedUI:CreateToggle(tab, options)
-    options = options or {}
-    local name = options.Name or "Toggle"
-    local default = options.Default or false
-    local callback = options.Callback or function() end
-    
-    local toggle = {
-        Name = name,
-        Value = default
-    }
-    
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, -10, 0, 45)
-    container.BackgroundColor3 = self.Theme.Secondary
-    container.BorderSizePixel = 0
-    container.Parent = tab.Container
-    CreateRound(container, 8)
-    CreatePadding(container, 10)
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -60, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    label.TextColor3 = self.Theme.Text
-    label.TextSize = 14
-    label.Font = Enum.Font.Gotham
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = container
-    
-    local switch = Instance.new("Frame")
-    switch.Size = UDim2.new(0, 40, 0, 22)
-    switch.Position = UDim2.new(1, -50, 0.5, 0)
-    switch.AnchorPoint = Vector2.new(0, 0.5)
-    switch.BackgroundColor3 = default and self.Theme.Accent or self.Theme.Border
-    switch.BorderSizePixel = 0
-    switch.Parent = container
-    CreateRound(switch, 11)
-    
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 18, 0, 18)
-    knob.Position = default and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
-    knob.AnchorPoint = Vector2.new(0, 0.5)
-    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    knob.BorderSizePixel = 0
-    knob.Parent = switch
-    CreateRound(knob, 9)
-    
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 1, 0)
-    btn.BackgroundTransparency = 1
-    btn.Text = ""
-    btn.Parent = container
-    
-    btn.MouseButton1Click:Connect(function()
-        toggle.Value = not toggle.Value
-        
-        Tween(switch, {BackgroundColor3 = toggle.Value and self.Theme.Accent or self.Theme.Border})
-        Tween(knob, {Position = toggle.Value and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)})
-        
-        local success, err = pcall(callback, toggle.Value)
-        if not success then
-            self:Notify({
-                Text = self:Tr("ErrorOccurred") .. " " .. name .. "\n" .. tostring(err),
-                Type = "Error",
-                Duration = 4
-            })
-        end
-    end)
-    
-    function toggle:Set(value)
-        toggle.Value = value
-        Tween(switch, {BackgroundColor3 = value and self.Theme.Accent or self.Theme.Border})
-        Tween(knob, {Position = value and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)})
-        pcall(callback, value)
-    end
-    
-    table.insert(tab.Elements, toggle)
-    return toggle
-end
-
-function StoppedUI:CreateSlider(tab, options)
-    options = options or {}
-    local name = options.Name or "Slider"
-    local min = options.Min or 0
-    local max = options.Max or 100
-    local default = options.Default or min
-    local callback = options.Callback or function() end
-    
-    local slider = {
-        Name = name,
-        Value = default
-    }
-    
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, -10, 0, 60)
-    container.BackgroundColor3 = self.Theme.Secondary
-    container.BorderSizePixel = 0
-    container.Parent = tab.Container
-    CreateRound(container, 8)
-    CreatePadding(container, 10)
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -60, 0, 20)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    label.TextColor3 = self.Theme.Text
-    label.TextSize = 14
-    label.Font = Enum.Font.Gotham
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = container
-    
-    local valueLabel = Instance.new("TextLabel")
-    valueLabel.Size = UDim2.new(0, 50, 0, 20)
-    valueLabel.Position = UDim2.new(1, -60, 0, 0)
-    valueLabel.BackgroundTransparency = 1
-    valueLabel.Text = tostring(default)
-    valueLabel.TextColor3 = self.Theme.Accent
-    valueLabel.TextSize = 14
-    valueLabel.Font = Enum.Font.GothamBold
-    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
-    valueLabel.Parent = container
-    
-    local track = Instance.new("Frame")
-    track.Size = UDim2.new(1, -20, 0, 6)
-    track.Position = UDim2.new(0, 10, 1, -16)
-    track.BackgroundColor3 = self.Theme.Background
-    track.BorderSizePixel = 0
-    track.Parent = container
-    CreateRound(track, 3)
-    
-    local fill = Instance.new("Frame")
-    fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
-    fill.BackgroundColor3 = self.Theme.Accent
-    fill.BorderSizePixel = 0
-    fill.Parent = track
-    CreateRound(fill, 3)
-    
-    local dragging = false
-    local lastUpdate = tick()
-    local debounceDelay = 0.05
-    
-    track.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-        end
-    end)
-    
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-    
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            if tick() - lastUpdate < debounceDelay then return end
-            lastUpdate = tick()
-            
-            local pos = Clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-            local value = math.floor(min + (max - min) * pos)
-            
-            slider.Value = value
-            valueLabel.Text = tostring(value)
-            fill.Size = UDim2.new(pos, 0, 1, 0)
-            
-            pcall(callback, value)
-        end
-    end)
-    
-    function slider:Set(value)
-        slider.Value = Clamp(value, min, max)
-        valueLabel.Text = tostring(slider.Value)
-        local pos = (slider.Value - min) / (max - min)
-        fill.Size = UDim2.new(pos, 0, 1, 0)
-        pcall(callback, slider.Value)
-    end
-    
-    table.insert(tab.Elements, slider)
-    return slider
-end
-
-function StoppedUI:CreateButton(tab, options)
-    options = options or {}
-    local name = options.Name or "Button"
-    local callback = options.Callback or function() end
-    
-    local container = Instance.new("TextButton")
-    container.Size = UDim2.new(1, -10, 0, 45)
-    container.BackgroundColor3 = self.Theme.Accent
-    container.BorderSizePixel = 0
-    container.Text = name
-    container.TextColor3 = Color3.fromRGB(255, 255, 255)
-    container.TextSize = 14
-    container.Font = Enum.Font.GothamBold
-    container.AutoButtonColor = false
-    container.Parent = tab.Container
-    CreateRound(container, 8)
-    
-    container.MouseEnter:Connect(function()
-        Tween(container, {BackgroundColor3 = Color3.fromRGB(
-            math.min(self.Theme.Accent.R * 255 * 1.2, 255) / 255,
-            math.min(self.Theme.Accent.G * 255 * 1.2, 255) / 255,
-            math.min(self.Theme.Accent.B * 255 * 1.2, 255) / 255
-        )}, 0.2)
-    end)
-    
-    container.MouseLeave:Connect(function()
-        Tween(container, {BackgroundColor3 = self.Theme.Accent}, 0.2)
-    end)
-    
-    container.MouseButton1Click:Connect(function()
-        Tween(container, {Size = UDim2.new(1, -12, 0, 43)}, 0.1)
-        wait(0.1)
-        Tween(container, {Size = UDim2.new(1, -10, 0, 45)}, 0.1)
-        
-        pcall(callback)
-    end)
-    
-    return container
-end
-
-function StoppedUI:CreateKeybind(tab, options)
-    options = options or {}
-    local name = options.Name or "Keybind"
-    local default = options.Default or Enum.KeyCode.E
-    local callback = options.Callback or function() end
-    
-    local keybind = {
-        Name = name,
-        Key = default,
-        Listening = false
-    }
-    
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, -10, 0, 45)
-    container.BackgroundColor3 = self.Theme.Secondary
-    container.BorderSizePixel = 0
-    container.Parent = tab.Container
-    CreateRound(container, 8)
-    CreatePadding(container, 10)
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -110, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    label.TextColor3 = self.Theme.Text
-    label.TextSize = 14
-    label.Font = Enum.Font.Gotham
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = container
-    
-    local keyBox = Instance.new("TextButton")
-    keyBox.Size = UDim2.new(0, 90, 0, 30)
-    keyBox.Position = UDim2.new(1, -100, 0.5, 0)
-    keyBox.AnchorPoint = Vector2.new(0, 0.5)
-    keyBox.BackgroundColor3 = self.Theme.Background
-    keyBox.Text = string.upper(tostring(default.Name))
-    keyBox.TextColor3 = self.Theme.Accent
-    keyBox.TextSize = 12
-    keyBox.Font = Enum.Font.GothamBold
-    keyBox.BorderSizePixel = 0
-    keyBox.AutoButtonColor = false
-    keyBox.Parent = container
-    CreateRound(keyBox, 6)
-    CreateStroke(keyBox, self.Theme.Border)
-    
-    keyBox.MouseEnter:Connect(function()
-        if not keybind.Listening then
-            Tween(keyBox, {BackgroundColor3 = self.Theme.Secondary}, 0.2)
-        end
-    end)
-    
-    keyBox.MouseLeave:Connect(function()
-        if not keybind.Listening then
-            Tween(keyBox, {BackgroundColor3 = self.Theme.Background}, 0.2)
-        end
-    end)
-    
-    keyBox.MouseButton1Click:Connect(function()
-        keybind.Listening = true
-        keyBox.Text = "..."
-        Tween(keyBox, {TextColor3 = self.Theme.Warning}, 0.2)
-        Tween(keyBox, {BackgroundColor3 = self.Theme.Warning:Lerp(self.Theme.Background, 0.8)}, 0.2)
-    end)
-    
-    UserInputService.InputBegan:Connect(function(input, gpe)
-        if keybind.Listening and input.UserInputType == Enum.UserInputType.Keyboard then
-            local newKeyName = string.upper(tostring(input.KeyCode.Name))
             
             keybind.Key = input.KeyCode
             keyBox.Text = newKeyName
@@ -2366,6 +1665,7 @@ function StoppedUI:CreateKeybind(tab, options)
             pcall(callback, keybind.Key)
         end
     end)
+    table.insert(self._allConnections, conn)
     
     function keybind:Set(key)
         keybind.Key = key
@@ -2378,6 +1678,7 @@ function StoppedUI:CreateKeybind(tab, options)
     return keybind
 end
 
+-- Dropdown Element (CORRIGIDO)
 function StoppedUI:CreateDropdown(tab, options)
     options = options or {}
     local name = options.Name or "Dropdown"
@@ -2424,7 +1725,7 @@ function StoppedUI:CreateDropdown(tab, options)
     CreateRound(button, 6)
     CreateStroke(button, self.Theme.Border)
     
-    -- FIX #1: listFrame é filho de ScreenGui, não container
+    -- listFrame é filho de ScreenGui, não container (CORRIGIDO)
     local listFrame = Instance.new("Frame")
     listFrame.Size = UDim2.new(0, 110, 0, #items * 35)
     listFrame.BackgroundColor3 = self.Theme.Secondary
@@ -2432,7 +1733,7 @@ function StoppedUI:CreateDropdown(tab, options)
     listFrame.Visible = false
     listFrame.ZIndex = 1005
     listFrame.ClipsDescendants = true
-    listFrame.Parent = self.ScreenGui -- FIX #1: não é filha do container
+    listFrame.Parent = self.ScreenGui
     CreateRound(listFrame, 6)
     CreateStroke(listFrame, self.Theme.Border)
     
@@ -2440,7 +1741,7 @@ function StoppedUI:CreateDropdown(tab, options)
     listLayout.Padding = UDim.new(0, 2)
     listLayout.Parent = listFrame
     
-    -- FIX #1: atualizar posição via RenderStepped
+    -- atualizar posição via RenderStepped (CORRIGIDO)
     local function updateListPosition()
         local absPos = button.AbsolutePosition
         local absSize = button.AbsoluteSize
@@ -2458,6 +1759,7 @@ function StoppedUI:CreateDropdown(tab, options)
             end
         end)
         table.insert(self._dropdownRenderConnections, posConn)
+        table.insert(self._allConnections, posConn)
     end
     
     for _, item in ipairs(items) do
@@ -2497,29 +1799,26 @@ function StoppedUI:CreateDropdown(tab, options)
         end
     end)
     
-    -- FIX #9: fechar ao clicar fora
-    local function setupClickOutside()
-        local conn
-        conn = UserInputService.InputBegan:Connect(function(input, gpe)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 and listFrame.Visible then
-                local mouse = UserInputService:GetMouseLocation()
-                local inList = (mouse.X >= listFrame.AbsolutePosition.X and 
-                               mouse.X <= listFrame.AbsolutePosition.X + listFrame.AbsoluteSize.X and
-                               mouse.Y >= listFrame.AbsolutePosition.Y and 
-                               mouse.Y <= listFrame.AbsolutePosition.Y + listFrame.AbsoluteSize.Y)
-                
-                local inBtn = (mouse.X >= button.AbsolutePosition.X and 
-                              mouse.X <= button.AbsolutePosition.X + button.AbsoluteSize.X and
-                              mouse.Y >= button.AbsolutePosition.Y and 
-                              mouse.Y <= button.AbsolutePosition.Y + button.AbsoluteSize.Y)
-                
-                if not inList and not inBtn then
-                    listFrame.Visible = false
-                end
+    -- fechar ao clicar fora (CORRIGIDO)
+    local clickConn = UserInputService.InputBegan:Connect(function(input, gpe)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and listFrame.Visible then
+            local mouse = UserInputService:GetMouseLocation()
+            local inList = (mouse.X >= listFrame.AbsolutePosition.X and 
+                           mouse.X <= listFrame.AbsolutePosition.X + listFrame.AbsoluteSize.X and
+                           mouse.Y >= listFrame.AbsolutePosition.Y and 
+                           mouse.Y <= listFrame.AbsolutePosition.Y + listFrame.AbsoluteSize.Y)
+            
+            local inBtn = (mouse.X >= button.AbsolutePosition.X and 
+                          mouse.X <= button.AbsolutePosition.X + button.AbsoluteSize.X and
+                          mouse.Y >= button.AbsolutePosition.Y and 
+                          mouse.Y <= button.AbsolutePosition.Y + button.AbsoluteSize.Y)
+            
+            if not inList and not inBtn then
+                listFrame.Visible = false
             end
-        end)
-    end
-    setupClickOutside()
+        end
+    end)
+    table.insert(self._allConnections, clickConn)
     
     function dropdown:Set(value)
         dropdown.Value = value
@@ -2529,6 +1828,73 @@ function StoppedUI:CreateDropdown(tab, options)
     
     table.insert(tab.Elements, dropdown)
     return dropdown
+end
+
+-- Label Element
+function StoppedUI:CreateLabel(tab, options)
+    options = options or {}
+    local text = options.Text or "Label"
+    
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(1, -10, 0, 30)
+    container.BackgroundTransparency = 1
+    container.BorderSizePixel = 0
+    container.Parent = tab.Container
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = self.Theme.TextDim
+    label.TextSize = 13
+    label.Font = Enum.Font.Gotham
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextWrapped = true
+    label.Parent = container
+    
+    return container
+end
+
+-- Cleanup and resource management (NOVO)
+function StoppedUI:Destroy()
+    -- Disconnect notification panel connection
+    if self._notificationPanelConn then
+        pcall(function() self._notificationPanelConn:Disconnect() end)
+        self._notificationPanelConn = nil
+    end
+    
+    -- Disconnect all dropdown render connections
+    if self._dropdownRenderConnections and #self._dropdownRenderConnections > 0 then
+        for _, conn in ipairs(self._dropdownRenderConnections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        self._dropdownRenderConnections = {}
+    end
+    
+    -- Disconnect all tracked connections
+    if self._allConnections and #self._allConnections > 0 then
+        for _, conn in ipairs(self._allConnections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        self._allConnections = {}
+    end
+    
+    -- Destroy the ScreenGui and all children
+    if self.ScreenGui and self.ScreenGui.Parent then
+        pcall(function() self.ScreenGui:Destroy() end)
+    end
+    
+    -- Clear references
+    self.ScreenGui = nil
+    self.Container = nil
+    self.NotificationPanel = nil
+    self.NotificationBell = nil
+    self.NotificationBellContainer = nil
+    self.NotificationBadge = nil
+    self._keybinds = {}
+    self._configs = {}
+    self._configCallbacks = {}
+    self._imgCache = {}
 end
 
 return StoppedUI
