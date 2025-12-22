@@ -245,6 +245,37 @@ function UIHelpers.GetResponsiveBreakpoint(viewportX)
     end
 end
 
+function UIHelpers.ResolveImage(img)
+    if not img or img == "" then
+        return "rbxassetid://3944680095"  -- Default fallback
+    end
+    
+    local imgStr = tostring(img)
+    
+    -- Already has rbxassetid prefix
+    if imgStr:match("^rbxassetid://") then
+        return imgStr
+    end
+    
+    -- Pure number (asset ID)
+    if imgStr:match("^%d+$") then
+        return "rbxassetid://" .. imgStr
+    end
+    
+    -- HTTP(S) URL - try to use directly (works in exploit environments)
+    if imgStr:match("^https?://") then
+        return imgStr
+    end
+    
+    -- Imgur hash (try to construct URL)
+    if imgStr:match("^%w+$") and #imgStr >= 5 then
+        return "https://i.imgur.com/" .. imgStr .. ".png"
+    end
+    
+    -- Fallback
+    return "rbxassetid://3944680095"
+end
+
 -- ========================================
 -- SLIDER COMPONENT (Enhanced & Modular)
 -- ========================================
@@ -544,6 +575,17 @@ function StoppedUI:Create(config)
     self:CreateMainContainer()
     self:SetupResponsiveness()
     
+    -- Initialize new systems
+    self:EnhanceNotificationSystem()
+    self:CreateThemeStore()
+    self:CreateHotkeyCustomizer()
+    self:CreateNotificationHistory()
+    self:CreateQuickActionsBar()
+    
+    if self.DevMode then
+        self:CreateProfilerPane()
+    end
+    
     -- Opening animation
     self.Container.Size = UDim2.new(0, 0, 0, 0)
     self.Container.BackgroundTransparency = 1
@@ -635,6 +677,12 @@ function StoppedUI:CreateTopbar()
     logo.Parent = self.Topbar
     UIHelpers.CreateRound(logo, 6)
     self.Logo = logo
+    
+    if config.Logo then
+        logo.Image = UIHelpers.ResolveImage(config.Logo)
+    else
+        logo.Image = "rbxassetid://3944680095"
+    end
     
     -- Close Button
     local closeBtn = Instance.new("TextButton")
@@ -1004,22 +1052,84 @@ function StoppedUI:CreateCommandPalette()
         self:Toggle()
     end)
     
-    self:RegisterCommand("Save Config", "Save current configuration", function()
-        self:RequestSave()
-    end)
-    
-    self:RegisterCommand("Load Config", "Load saved configuration", function()
-        self:RequestLoad()
-    end)
-    
     self:RegisterCommand("Toggle Preview", "Show/Hide preview pane", function()
         self.ShowPreview = not self.ShowPreview
         self.PreviewPane.Visible = self.ShowPreview
+        if self.Splitter then
+            self.Splitter.Visible = self.ShowPreview and self.EnableSplitter
+        end
     end)
     
     self:RegisterCommand("Toggle Dev Mode", "Enable/Disable developer mode", function()
         self:ToggleDevMode()
     end)
+    
+    self:RegisterCommand("Open Theme Store", "Browse and apply themes", function()
+        self:ToggleThemeStore()
+    end)
+    
+    self:RegisterCommand("Open Hotkey Manager", "Customize keyboard shortcuts", function()
+        self:ToggleHotkeyCustomizer()
+    end)
+    
+    self:RegisterCommand("View Notification History", "See all past notifications", function()
+        self:ToggleNotificationHistory()
+    end)
+    
+    self:RegisterCommand("Toggle Profiler", "Show/Hide performance profiler", function()
+        self:ToggleProfiler()
+    end)
+    
+    self:RegisterCommand("Toggle Quick Actions", "Show/Hide quick action bar", function()
+        self:ToggleQuickActions()
+    end)
+    
+    self:RegisterCommand("Compact Layout", "Switch to compact mode", function()
+        self:SetLayoutMode("Compact")
+    end)
+    
+    self:RegisterCommand("Normal Layout", "Switch to normal mode", function()
+        self:SetLayoutMode("Normal")
+    end)
+    
+    self:RegisterCommand("Expanded Layout", "Switch to expanded mode", function()
+        self:SetLayoutMode("Expanded")
+    end)
+    
+    self:RegisterCommand("Center Window", "Move window to screen center", function()
+        local viewport = workspace.CurrentCamera.ViewportSize
+        self.Container.Position = UDim2.new(
+            0, (viewport.X - 800) / 2,
+            0, (viewport.Y - 550) / 2
+        )
+        self:Notify({Text = "Window centered", Type = "Success", Duration = 1.5})
+    end)
+    
+    self:RegisterCommand("List Snippets", "Show all saved snippets", function()
+        local snippets = self:ListSnippets()
+        if #snippets == 0 then
+            self:Notify({Text = "No snippets saved", Type = "Info", Duration = 2})
+        else
+            local text = "Saved snippets: " .. #snippets
+            self:Notify({Text = text, Type = "Info", Duration = 3})
+        end
+    end)
+    
+    self:RegisterCommand("Clear Notification History", "Delete all notification history", function()
+        self.NotificationHistory = {}
+        self:Notify({Text = "History cleared", Type = "Success", Duration = 2})
+    end)
+    
+    -- Only add config commands if enabled
+    if self.ConfigEnabled then
+        self:RegisterCommand("Save Config", "Save current configuration", function()
+            self:RequestSave()
+        end)
+        
+        self:RegisterCommand("Load Config", "Load saved configuration", function()
+            self:RequestLoad()
+        end)
+    end
     
     -- Search functionality
     UIHelpers.SafeConnect(searchBox:GetPropertyChangedSignal("Text"), function()
@@ -1136,7 +1246,767 @@ function StoppedUI:ToggleCommandPalette()
 end
 
 -- ========================================
--- DEV MODE INSPECTOR
+-- THEME STORE & LIVE PREVIEW
+-- ========================================
+function StoppedUI:CreateThemeStore()
+    local themeStore = Instance.new("Frame")
+    themeStore.Name = "ThemeStore"
+    themeStore.Size = UDim2.new(0, 600, 0, 500)
+    themeStore.Position = UDim2.new(0.5, 0, 0.5, 0)
+    themeStore.AnchorPoint = Vector2.new(0.5, 0.5)
+    themeStore.BackgroundColor3 = self.Theme.Card
+    themeStore.BorderSizePixel = 0
+    themeStore.Visible = false
+    themeStore.ZIndex = 1000
+    themeStore.Parent = self.Container
+    UIHelpers.CreateRound(themeStore, self.Theme.Radius)
+    UIHelpers.CreateStroke(themeStore, self.Theme.Accent, 2, 0.5)
+    
+    -- Header
+    local themeHeader = Instance.new("Frame")
+    themeHeader.Size = UDim2.new(1, 0, 0, 50)
+    themeHeader.BackgroundColor3 = self.Theme.Secondary
+    themeHeader.BorderSizePixel = 0
+    themeHeader.Parent = themeStore
+    UIHelpers.CreateRound(themeHeader, self.Theme.Radius)
+    
+    local themeTitle = Instance.new("TextLabel")
+    themeTitle.Size = UDim2.new(1, -100, 1, 0)
+    themeTitle.Position = UDim2.new(0, 20, 0, 0)
+    themeTitle.BackgroundTransparency = 1
+    themeTitle.Text = "🎨 Theme Store"
+    themeTitle.TextColor3 = self.Theme.Text
+    themeTitle.TextSize = 16
+    themeTitle.Font = Enum.Font.GothamBold
+    themeTitle.TextXAlignment = Enum.TextXAlignment.Left
+    themeTitle.TextYAlignment = Enum.TextYAlignment.Center
+    themeTitle.Parent = themeHeader
+    
+    -- Close button
+    local closeThemeBtn = Instance.new("TextButton")
+    closeThemeBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeThemeBtn.Position = UDim2.new(1, -40, 0.5, 0)
+    closeThemeBtn.AnchorPoint = Vector2.new(0, 0.5)
+    closeThemeBtn.BackgroundColor3 = self.Theme.Background
+    closeThemeBtn.Text = "×"
+    closeThemeBtn.TextColor3 = self.Theme.Text
+    closeThemeBtn.TextSize = 20
+    closeThemeBtn.Font = Enum.Font.GothamBold
+    closeThemeBtn.BorderSizePixel = 0
+    closeThemeBtn.Parent = themeHeader
+    UIHelpers.CreateRound(closeThemeBtn, 6)
+    
+    UIHelpers.SafeConnect(closeThemeBtn.MouseButton1Click, function()
+        self:ToggleThemeStore()
+    end, self._allConnections)
+    
+    -- Theme grid
+    local themeScroll = Instance.new("ScrollingFrame")
+    themeScroll.Size = UDim2.new(1, -20, 1, -70)
+    themeScroll.Position = UDim2.new(0, 10, 0, 55)
+    themeScroll.BackgroundTransparency = 1
+    themeScroll.BorderSizePixel = 0
+    themeScroll.ScrollBarThickness = 6
+    themeScroll.ScrollBarImageColor3 = self.Theme.Accent
+    themeScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    themeScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    themeScroll.Parent = themeStore
+    
+    local themeGrid = Instance.new("UIGridLayout")
+    themeGrid.CellSize = UDim2.new(0, 170, 0, 200)
+    themeGrid.CellPadding = UDim2.new(0, 10, 0, 10)
+    themeGrid.SortOrder = Enum.SortOrder.LayoutOrder
+    themeGrid.Parent = themeScroll
+    
+    UIHelpers.CreatePadding(themeScroll, 10)
+    
+    self.ThemeStore = {
+        Container = themeStore,
+        Scroll = themeScroll
+    }
+    
+    -- Populate with available themes
+    self:PopulateThemeStore()
+end
+
+function StoppedUI:PopulateThemeStore()
+    local scroll = self.ThemeStore.Scroll
+    
+    for themeName, theme in pairs(StoppedUI.Themes) do
+        local themeCard = Instance.new("Frame")
+        themeCard.Name = themeName
+        themeCard.BackgroundColor3 = theme.Background
+        themeCard.BorderSizePixel = 0
+        themeCard.Parent = scroll
+        UIHelpers.CreateRound(themeCard, self.Theme.Radius)
+        UIHelpers.CreateStroke(themeCard, theme.Accent, 2, 0.7)
+        
+        -- Theme preview
+        local previewBg = Instance.new("Frame")
+        previewBg.Size = UDim2.new(1, -16, 0, 100)
+        previewBg.Position = UDim2.new(0, 8, 0, 8)
+        previewBg.BackgroundColor3 = theme.Card
+        previewBg.BorderSizePixel = 0
+        previewBg.Parent = themeCard
+        UIHelpers.CreateRound(previewBg, self.Theme.Radius - 2)
+        
+        -- Color swatches
+        local swatchContainer = Instance.new("Frame")
+        swatchContainer.Size = UDim2.new(1, -16, 0, 40)
+        swatchContainer.Position = UDim2.new(0, 8, 0, 8)
+        swatchContainer.BackgroundTransparency = 1
+        swatchContainer.Parent = previewBg
+        
+        local swatchLayout = Instance.new("UIListLayout")
+        swatchLayout.FillDirection = Enum.FillDirection.Horizontal
+        swatchLayout.Padding = UDim.new(0, 4)
+        swatchLayout.Parent = swatchContainer
+        
+        local colors = {theme.Accent, theme.Success, theme.Warning, theme.Error}
+        for _, color in ipairs(colors) do
+            local swatch = Instance.new("Frame")
+            swatch.Size = UDim2.new(0, 30, 0, 30)
+            swatch.BackgroundColor3 = color
+            swatch.BorderSizePixel = 0
+            swatch.Parent = swatchContainer
+            UIHelpers.CreateRound(swatch, 6)
+        end
+        
+        -- Theme name
+        local themeLabelBg = Instance.new("Frame")
+        themeLabelBg.Size = UDim2.new(1, -16, 0, 40)
+        themeLabelBg.Position = UDim2.new(0, 8, 0, 55)
+        themeLabelBg.BackgroundColor3 = theme.Secondary
+        themeLabelBg.BorderSizePixel = 0
+        themeLabelBg.Parent = previewBg
+        UIHelpers.CreateRound(themeLabelBg, self.Theme.Radius - 2)
+        
+        local themeLabel = Instance.new("TextLabel")
+        themeLabel.Size = UDim2.new(1, 0, 1, 0)
+        themeLabel.BackgroundTransparency = 1
+        themeLabel.Text = themeName
+        themeLabel.TextColor3 = theme.Text
+        themeLabel.TextSize = 12
+        themeLabel.Font = Enum.Font.GothamBold
+        themeLabel.TextXAlignment = Enum.TextXAlignment.Center
+        themeLabel.TextYAlignment = Enum.TextYAlignment.Center
+        themeLabel.Parent = themeLabelBg
+        
+        -- Apply button
+        local applyBtn = Instance.new("TextButton")
+        applyBtn.Size = UDim2.new(1, -16, 0, 35)
+        applyBtn.Position = UDim2.new(0, 8, 1, -43)
+        applyBtn.BackgroundColor3 = theme.Accent
+        applyBtn.Text = "Apply"
+        applyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        applyBtn.TextSize = 13
+        applyBtn.Font = Enum.Font.GothamBold
+        applyBtn.BorderSizePixel = 0
+        applyBtn.Parent = themeCard
+        UIHelpers.CreateRound(applyBtn, self.Theme.Radius - 2)
+        
+        -- Current theme indicator
+        local currentIndicator = Instance.new("Frame")
+        currentIndicator.Size = UDim2.new(0, 50, 0, 20)
+        currentIndicator.Position = UDim2.new(1, -58, 0, 8)
+        currentIndicator.BackgroundColor3 = theme.Success
+        currentIndicator.BorderSizePixel = 0
+        currentIndicator.Visible = (themeName == "Dark")  -- Default
+        currentIndicator.Parent = themeCard
+        UIHelpers.CreateRound(currentIndicator, 4)
+        
+        local currentLabel = Instance.new("TextLabel")
+        currentLabel.Size = UDim2.new(1, 0, 1, 0)
+        currentLabel.BackgroundTransparency = 1
+        currentLabel.Text = "✓"
+        currentLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        currentLabel.TextSize = 12
+        currentLabel.Font = Enum.Font.GothamBold
+        currentLabel.TextXAlignment = Enum.TextXAlignment.Center
+        currentLabel.Parent = currentIndicator
+        
+        UIHelpers.SafeConnect(applyBtn.MouseButton1Click, function()
+            self:ApplyTheme(themeName)
+            
+            -- Update indicators
+            for _, card in ipairs(scroll:GetChildren()) do
+                if card:IsA("Frame") then
+                    local indicator = card:FindFirstChild("Frame")
+                    if indicator and indicator.Name ~= "Frame" then
+                        indicator.Visible = (card.Name == themeName)
+                    end
+                end
+            end
+        end, self._allConnections)
+        
+        UIHelpers.SafeConnect(applyBtn.MouseEnter, function()
+            UIHelpers.Tween(applyBtn, {Size = UDim2.new(1, -12, 0, 37)}, 0.1)
+        end, self._allConnections)
+        
+        UIHelpers.SafeConnect(applyBtn.MouseLeave, function()
+            UIHelpers.Tween(applyBtn, {Size = UDim2.new(1, -16, 0, 35)}, 0.1)
+        end, self._allConnections)
+    end
+end
+
+function StoppedUI:ApplyTheme(themeName)
+    if not StoppedUI.Themes[themeName] then return end
+    
+    self.Theme = StoppedUI.Themes[themeName]
+    
+    -- Update all UI elements with new theme
+    -- Container
+    self.Container.BackgroundColor3 = self.Theme.Background
+    local containerStroke = self.Container:FindFirstChildOfClass("UIStroke")
+    if containerStroke then
+        containerStroke.Color = self.Theme.Border
+    end
+    
+    -- Topbar
+    self.Topbar.BackgroundColor3 = self.Theme.Card
+    self.Title.TextColor3 = self.Theme.Text
+    
+    if self.Logo then
+        self.Logo.ImageColor3 = self.Theme.Accent
+    end
+    
+    -- Update all elements
+    self:UpdateThemeForAllElements()
+    
+    self:Notify({
+        Text = "Theme applied: " .. themeName,
+        Type = "Success",
+        Duration = 2
+    })
+end
+
+function StoppedUI:UpdateThemeForAllElements()
+    -- Update LeftPane, PreviewPane, etc.
+    if self.LeftPane then
+        self.LeftPane.ScrollBarImageColor3 = self.Theme.Accent
+    end
+    
+    if self.PreviewPane then
+        self.PreviewPane.BackgroundColor3 = self.Theme.Card
+        local stroke = self.PreviewPane:FindFirstChildOfClass("UIStroke")
+        if stroke then stroke.Color = self.Theme.Border end
+    end
+    
+    -- Update all tabs
+    for _, tab in ipairs(self.Tabs) do
+        for _, element in ipairs(tab.Elements) do
+            if element.Container then
+                local bg = element.Container:FindFirstChildOfClass("UIStroke")
+                if bg then bg.Color = self.Theme.Border end
+                
+                if element.Type == "Toggle" then
+                    -- Update toggle colors if needed
+                elseif element.Type == "Slider" then
+                    -- Update slider colors
+                    if element.Slider then
+                        element.Slider.Fill.BackgroundColor3 = self.Theme.Accent
+                        element.Slider.Knob.BackgroundColor3 = self.Theme.Accent
+                    end
+                end
+            end
+        end
+    end
+end
+
+function StoppedUI:ToggleThemeStore()
+    local store = self.ThemeStore.Container
+    store.Visible = not store.Visible
+    
+    if store.Visible then
+        store.Size = UDim2.new(0, 0, 0, 0)
+        store.BackgroundTransparency = 1
+        UIHelpers.Tween(store, {Size = UDim2.new(0, 600, 0, 500)}, 0.25)
+        UIHelpers.Tween(store, {BackgroundTransparency = 0}, 0.2)
+    else
+        UIHelpers.Tween(store, {Size = UDim2.new(0, 0, 0, 0)}, 0.2)
+        UIHelpers.Tween(store, {BackgroundTransparency = 1}, 0.2)
+    end
+end
+
+-- ========================================
+-- HOTKEY CUSTOMIZER
+-- ========================================
+function StoppedUI:CreateHotkeyCustomizer()
+    local hotkeyPanel = Instance.new("Frame")
+    hotkeyPanel.Name = "HotkeyCustomizer"
+    hotkeyPanel.Size = UDim2.new(0, 500, 0, 450)
+    hotkeyPanel.Position = UDim2.new(0.5, 0, 0.5, 0)
+    hotkeyPanel.AnchorPoint = Vector2.new(0.5, 0.5)
+    hotkeyPanel.BackgroundColor3 = self.Theme.Card
+    hotkeyPanel.BorderSizePixel = 0
+    hotkeyPanel.Visible = false
+    hotkeyPanel.ZIndex = 1000
+    hotkeyPanel.Parent = self.Container
+    UIHelpers.CreateRound(hotkeyPanel, self.Theme.Radius)
+    UIHelpers.CreateStroke(hotkeyPanel, self.Theme.Accent, 2, 0.5)
+    
+    -- Header
+    local hotkeyHeader = Instance.new("Frame")
+    hotkeyHeader.Size = UDim2.new(1, 0, 0, 50)
+    hotkeyHeader.BackgroundColor3 = self.Theme.Secondary
+    hotkeyHeader.BorderSizePixel = 0
+    hotkeyHeader.Parent = hotkeyPanel
+    UIHelpers.CreateRound(hotkeyHeader, self.Theme.Radius)
+    
+    local hotkeyTitle = Instance.new("TextLabel")
+    hotkeyTitle.Size = UDim2.new(1, -100, 1, 0)
+    hotkeyTitle.Position = UDim2.new(0, 20, 0, 0)
+    hotkeyTitle.BackgroundTransparency = 1
+    hotkeyTitle.Text = "⌨️ Hotkey Manager"
+    hotkeyTitle.TextColor3 = self.Theme.Text
+    hotkeyTitle.TextSize = 16
+    hotkeyTitle.Font = Enum.Font.GothamBold
+    hotkeyTitle.TextXAlignment = Enum.TextXAlignment.Left
+    hotkeyTitle.TextYAlignment = Enum.TextYAlignment.Center
+    hotkeyTitle.Parent = hotkeyHeader
+    
+    -- Close button
+    local closeHotkeyBtn = Instance.new("TextButton")
+    closeHotkeyBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeHotkeyBtn.Position = UDim2.new(1, -40, 0.5, 0)
+    closeHotkeyBtn.AnchorPoint = Vector2.new(0, 0.5)
+    closeHotkeyBtn.BackgroundColor3 = self.Theme.Background
+    closeHotkeyBtn.Text = "×"
+    closeHotkeyBtn.TextColor3 = self.Theme.Text
+    closeHotkeyBtn.TextSize = 20
+    closeHotkeyBtn.Font = Enum.Font.GothamBold
+    closeHotkeyBtn.BorderSizePixel = 0
+    closeHotkeyBtn.Parent = hotkeyHeader
+    UIHelpers.CreateRound(closeHotkeyBtn, 6)
+    
+    UIHelpers.SafeConnect(closeHotkeyBtn.MouseButton1Click, function()
+        self:ToggleHotkeyCustomizer()
+    end, self._allConnections)
+    
+    -- Hotkey list
+    local hotkeyScroll = Instance.new("ScrollingFrame")
+    hotkeyScroll.Size = UDim2.new(1, -20, 1, -70)
+    hotkeyScroll.Position = UDim2.new(0, 10, 0, 55)
+    hotkeyScroll.BackgroundTransparency = 1
+    hotkeyScroll.BorderSizePixel = 0
+    hotkeyScroll.ScrollBarThickness = 6
+    hotkeyScroll.ScrollBarImageColor3 = self.Theme.Accent
+    hotkeyScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    hotkeyScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    hotkeyScroll.Parent = hotkeyPanel
+    
+    local hotkeyList = Instance.new("UIListLayout")
+    hotkeyList.Padding = UDim.new(0, 8)
+    hotkeyList.SortOrder = Enum.SortOrder.LayoutOrder
+    hotkeyList.Parent = hotkeyScroll
+    
+    UIHelpers.CreatePadding(hotkeyScroll, 10)
+    
+    self.HotkeyCustomizer = {
+        Container = hotkeyPanel,
+        Scroll = hotkeyScroll,
+        Hotkeys = {}
+    }
+    
+    -- Add default hotkeys
+    self:RegisterHotkey("Toggle UI", Enum.KeyCode.RightShift, function()
+        self:Toggle()
+    end)
+    
+    self:RegisterHotkey("Command Palette", Enum.KeyCode.K, function()
+        -- Ctrl+K handled elsewhere
+    end, {Ctrl = true})
+    
+    self:PopulateHotkeyList()
+end
+
+function StoppedUI:RegisterHotkey(name, keyCode, callback, modifiers)
+    modifiers = modifiers or {}
+    
+    local hotkey = {
+        Name = name,
+        KeyCode = keyCode,
+        Callback = callback,
+        Modifiers = modifiers
+    }
+    
+    table.insert(self.HotkeyCustomizer.Hotkeys, hotkey)
+    
+    -- Setup listener
+    UIHelpers.SafeConnect(UserInputService.InputBegan, function(input, gameProcessed)
+        if gameProcessed then return end
+        
+        if input.KeyCode == keyCode then
+            local ctrlPressed = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+            local shiftPressed = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+            local altPressed = UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)
+            
+            if (not modifiers.Ctrl or ctrlPressed) and
+               (not modifiers.Shift or shiftPressed) and
+               (not modifiers.Alt or altPressed) then
+                pcall(callback)
+            end
+        end
+    end, self._allConnections)
+end
+
+function StoppedUI:PopulateHotkeyList()
+    local scroll = self.HotkeyCustomizer.Scroll
+    
+    for _, hotkey in ipairs(self.HotkeyCustomizer.Hotkeys) do
+        local hotkeyRow = Instance.new("Frame")
+        hotkeyRow.Size = UDim2.new(1, 0, 0, 50)
+        hotkeyRow.BackgroundColor3 = self.Theme.Background
+        hotkeyRow.BorderSizePixel = 0
+        hotkeyRow.Parent = scroll
+        UIHelpers.CreateRound(hotkeyRow, self.Theme.Radius - 2)
+        UIHelpers.CreatePadding(hotkeyRow, 10)
+        
+        local hotkeyName = Instance.new("TextLabel")
+        hotkeyName.Size = UDim2.new(0.6, 0, 1, 0)
+        hotkeyName.BackgroundTransparency = 1
+        hotkeyName.Text = hotkey.Name
+        hotkeyName.TextColor3 = self.Theme.Text
+        hotkeyName.TextSize = 13
+        hotkeyName.Font = Enum.Font.Gotham
+        hotkeyName.TextXAlignment = Enum.TextXAlignment.Left
+        hotkeyName.TextYAlignment = Enum.TextYAlignment.Center
+        hotkeyName.Parent = hotkeyRow
+        
+        local hotkeyDisplay = Instance.new("TextButton")
+        hotkeyDisplay.Size = UDim2.new(0.35, 0, 0, 30)
+        hotkeyDisplay.Position = UDim2.new(0.6, 5, 0.5, 0)
+        hotkeyDisplay.AnchorPoint = Vector2.new(0, 0.5)
+        hotkeyDisplay.BackgroundColor3 = self.Theme.Secondary
+        hotkeyDisplay.Text = hotkey.KeyCode.Name
+        hotkeyDisplay.TextColor3 = self.Theme.Accent
+        hotkeyDisplay.TextSize = 12
+        hotkeyDisplay.Font = Enum.Font.GothamBold
+        hotkeyDisplay.BorderSizePixel = 0
+        hotkeyDisplay.Parent = hotkeyRow
+        UIHelpers.CreateRound(hotkeyDisplay, 6)
+        
+        -- Click to rebind (TODO: implement rebinding UI)
+        UIHelpers.SafeConnect(hotkeyDisplay.MouseButton1Click, function()
+            hotkeyDisplay.Text = "Press key..."
+            -- Rebinding logic here
+        end, self._allConnections)
+    end
+end
+
+function StoppedUI:ToggleHotkeyCustomizer()
+    local panel = self.HotkeyCustomizer.Container
+    panel.Visible = not panel.Visible
+    
+    if panel.Visible then
+        panel.Size = UDim2.new(0, 0, 0, 0)
+        UIHelpers.Tween(panel, {Size = UDim2.new(0, 500, 0, 450)}, 0.25)
+    else
+        UIHelpers.Tween(panel, {Size = UDim2.new(0, 0, 0, 0)}, 0.2)
+    end
+end
+
+-- ========================================
+-- NOTIFICATION CENTER WITH HISTORY
+-- ========================================
+function StoppedUI:EnhanceNotificationSystem()
+    self.NotificationHistory = {}
+    self.MaxHistorySize = 50
+    
+    -- Always show panel by default
+    if self.NotificationPanel then
+        self.NotificationPanel.Visible = true
+    end
+end
+
+function StoppedUI:AddToHistory(notification)
+    table.insert(self.NotificationHistory, 1, {
+        Text = notification.Text,
+        SubText = notification.SubText or "",
+        Type = notification.Type or "Info",
+        Timestamp = os.date("%H:%M:%S"),
+        ImageHash = notification.ImageHash
+    })
+    
+    -- Limit history size
+    while #self.NotificationHistory > self.MaxHistorySize do
+        table.remove(self.NotificationHistory)
+    end
+end
+
+function StoppedUI:CreateNotificationHistory()
+    local historyPanel = Instance.new("Frame")
+    historyPanel.Name = "NotificationHistory"
+    historyPanel.Size = UDim2.new(0, 400, 0, 500)
+    historyPanel.Position = UDim2.new(0.5, 0, 0.5, 0)
+    historyPanel.AnchorPoint = Vector2.new(0.5, 0.5)
+    historyPanel.BackgroundColor3 = self.Theme.Card
+    historyPanel.BorderSizePixel = 0
+    historyPanel.Visible = false
+    historyPanel.ZIndex = 1000
+    historyPanel.Parent = self.Container
+    UIHelpers.CreateRound(historyPanel, self.Theme.Radius)
+    UIHelpers.CreateStroke(historyPanel, self.Theme.Accent, 2, 0.5)
+    
+    -- Header
+    local historyHeader = Instance.new("Frame")
+    historyHeader.Size = UDim2.new(1, 0, 0, 50)
+    historyHeader.BackgroundColor3 = self.Theme.Secondary
+    historyHeader.BorderSizePixel = 0
+    historyHeader.Parent = historyPanel
+    UIHelpers.CreateRound(historyHeader, self.Theme.Radius)
+    
+    local historyTitle = Instance.new("TextLabel")
+    historyTitle.Size = UDim2.new(1, -100, 1, 0)
+    historyTitle.Position = UDim2.new(0, 20, 0, 0)
+    historyTitle.BackgroundTransparency = 1
+    historyTitle.Text = "📜 Notification History"
+    historyTitle.TextColor3 = self.Theme.Text
+    historyTitle.TextSize = 16
+    historyTitle.Font = Enum.Font.GothamBold
+    historyTitle.TextXAlignment = Enum.TextXAlignment.Left
+    historyTitle.TextYAlignment = Enum.TextYAlignment.Center
+    historyTitle.Parent = historyHeader
+    
+    -- Clear button
+    local clearBtn = Instance.new("TextButton")
+    clearBtn.Size = UDim2.new(0, 70, 0, 30)
+    clearBtn.Position = UDim2.new(1, -150, 0.5, 0)
+    clearBtn.AnchorPoint = Vector2.new(0, 0.5)
+    clearBtn.BackgroundColor3 = self.Theme.Error
+    clearBtn.Text = "Clear"
+    clearBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    clearBtn.TextSize = 12
+    clearBtn.Font = Enum.Font.GothamBold
+    clearBtn.BorderSizePixel = 0
+    clearBtn.Parent = historyHeader
+    UIHelpers.CreateRound(clearBtn, 6)
+    
+    UIHelpers.SafeConnect(clearBtn.MouseButton1Click, function()
+        self.NotificationHistory = {}
+        self:RefreshHistoryPanel()
+        self:Notify({Text = "History cleared", Type = "Info", Duration = 2})
+    end, self._allConnections)
+    
+    -- Close button
+    local closeHistoryBtn = Instance.new("TextButton")
+    closeHistoryBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeHistoryBtn.Position = UDim2.new(1, -40, 0.5, 0)
+    closeHistoryBtn.AnchorPoint = Vector2.new(0, 0.5)
+    closeHistoryBtn.BackgroundColor3 = self.Theme.Background
+    closeHistoryBtn.Text = "×"
+    closeHistoryBtn.TextColor3 = self.Theme.Text
+    closeHistoryBtn.TextSize = 20
+    closeHistoryBtn.Font = Enum.Font.GothamBold
+    closeHistoryBtn.BorderSizePixel = 0
+    closeHistoryBtn.Parent = historyHeader
+    UIHelpers.CreateRound(closeHistoryBtn, 6)
+    
+    UIHelpers.SafeConnect(closeHistoryBtn.MouseButton1Click, function()
+        self:ToggleNotificationHistory()
+    end, self._allConnections)
+    
+    -- History list
+    local historyScroll = Instance.new("ScrollingFrame")
+    historyScroll.Size = UDim2.new(1, -20, 1, -70)
+    historyScroll.Position = UDim2.new(0, 10, 0, 55)
+    historyScroll.BackgroundTransparency = 1
+    historyScroll.BorderSizePixel = 0
+    historyScroll.ScrollBarThickness = 6
+    historyScroll.ScrollBarImageColor3 = self.Theme.Accent
+    historyScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    historyScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    historyScroll.Parent = historyPanel
+    
+    local historyList = Instance.new("UIListLayout")
+    historyList.Padding = UDim.new(0, 6)
+    historyList.SortOrder = Enum.SortOrder.LayoutOrder
+    historyList.Parent = historyScroll
+    
+    UIHelpers.CreatePadding(historyScroll, 10)
+    
+    self.NotificationHistoryPanel = {
+        Container = historyPanel,
+        Scroll = historyScroll
+    }
+end
+
+function StoppedUI:RefreshHistoryPanel()
+    local scroll = self.NotificationHistoryPanel.Scroll
+    
+    -- Clear existing
+    for _, child in ipairs(scroll:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+    
+    -- Add history items
+    for i, notif in ipairs(self.NotificationHistory) do
+        local historyItem = Instance.new("Frame")
+        historyItem.Size = UDim2.new(1, 0, 0, 70)
+        historyItem.BackgroundColor3 = self.Theme.Background
+        historyItem.BorderSizePixel = 0
+        historyItem.LayoutOrder = i
+        historyItem.Parent = scroll
+        UIHelpers.CreateRound(historyItem, self.Theme.Radius - 2)
+        UIHelpers.CreatePadding(historyItem, 8)
+        
+        local colors = {
+            Info = self.Theme.Accent,
+            Success = self.Theme.Success,
+            Warning = self.Theme.Warning,
+            Error = self.Theme.Error
+        }
+        
+        -- Type indicator
+        local typeIndicator = Instance.new("Frame")
+        typeIndicator.Size = UDim2.new(0, 4, 1, -16)
+        typeIndicator.Position = UDim2.new(0, 0, 0, 8)
+        typeIndicator.BackgroundColor3 = colors[notif.Type] or self.Theme.Accent
+        typeIndicator.BorderSizePixel = 0
+        typeIndicator.Parent = historyItem
+        UIHelpers.CreateRound(typeIndicator, 2)
+        
+        -- Text content
+        local textLabel = Instance.new("TextLabel")
+        textLabel.Size = UDim2.new(1, -70, 0, 20)
+        textLabel.Position = UDim2.new(0, 10, 0, 8)
+        textLabel.BackgroundTransparency = 1
+        textLabel.Text = notif.Text
+        textLabel.TextColor3 = self.Theme.Text
+        textLabel.TextSize = 12
+        textLabel.Font = Enum.Font.GothamBold
+        textLabel.TextXAlignment = Enum.TextXAlignment.Left
+        textLabel.TextTruncate = Enum.TextTruncate.AtEnd
+        textLabel.Parent = historyItem
+        
+        local timeLabel = Instance.new("TextLabel")
+        timeLabel.Size = UDim2.new(0, 60, 0, 16)
+        timeLabel.Position = UDim2.new(1, -68, 0, 8)
+        timeLabel.BackgroundTransparency = 1
+        timeLabel.Text = notif.Timestamp
+        timeLabel.TextColor3 = self.Theme.TextDim
+        timeLabel.TextSize = 10
+        timeLabel.Font = Enum.Font.Gotham
+        timeLabel.TextXAlignment = Enum.TextXAlignment.Right
+        timeLabel.Parent = historyItem
+        
+        if notif.SubText ~= "" then
+            local subLabel = Instance.new("TextLabel")
+            subLabel.Size = UDim2.new(1, -70, 0, 16)
+            subLabel.Position = UDim2.new(0, 10, 0, 30)
+            subLabel.BackgroundTransparency = 1
+            subLabel.Text = notif.SubText
+            subLabel.TextColor3 = self.Theme.TextDim
+            subLabel.TextSize = 10
+            subLabel.Font = Enum.Font.Gotham
+            subLabel.TextXAlignment = Enum.TextXAlignment.Left
+            subLabel.TextTruncate = Enum.TextTruncate.AtEnd
+            subLabel.Parent = historyItem
+        end
+    end
+end
+
+function StoppedUI:ToggleNotificationHistory()
+    local panel = self.NotificationHistoryPanel.Container
+    panel.Visible = not panel.Visible
+    
+    if panel.Visible then
+        self:RefreshHistoryPanel()
+        panel.Size = UDim2.new(0, 0, 0, 0)
+        UIHelpers.Tween(panel, {Size = UDim2.new(0, 400, 0, 500)}, 0.25)
+    else
+        UIHelpers.Tween(panel, {Size = UDim2.new(0, 0, 0, 0)}, 0.2)
+    end
+end
+
+-- ========================================
+-- LIVE DEBUG / PROFILER PANE
+-- ========================================
+function StoppedUI:CreateProfilerPane()
+    local profilerPane = Instance.new("Frame")
+    profilerPane.Name = "ProfilerPane"
+    profilerPane.Size = UDim2.new(0, 300, 0, 250)
+    profilerPane.Position = UDim2.new(0, 10, 1, -260)
+    profilerPane.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    profilerPane.BackgroundTransparency = 0.2
+    profilerPane.BorderSizePixel = 0
+    profilerPane.ZIndex = 999
+    profilerPane.Visible = false
+    profilerPane.Parent = self.Container
+    UIHelpers.CreateRound(profilerPane, self.Theme.Radius)
+    UIHelpers.CreateStroke(profilerPane, self.Theme.Accent, 2, 0.6)
+    
+    local profilerTitle = Instance.new("TextLabel")
+    profilerTitle.Size = UDim2.new(1, -20, 0, 30)
+    profilerTitle.Position = UDim2.new(0, 10, 0, 5)
+    profilerTitle.BackgroundTransparency = 1
+    profilerTitle.Text = "📊 Performance Profiler"
+    profilerTitle.TextColor3 = self.Theme.Accent
+    profilerTitle.TextSize = 14
+    profilerTitle.Font = Enum.Font.GothamBold
+    profilerTitle.TextXAlignment = Enum.TextXAlignment.Left
+    profilerTitle.Parent = profilerPane
+    
+    local profilerStats = Instance.new("TextLabel")
+    profilerStats.Size = UDim2.new(1, -20, 1, -40)
+    profilerStats.Position = UDim2.new(0, 10, 0, 35)
+    profilerStats.BackgroundTransparency = 1
+    profilerStats.Text = "Initializing..."
+    profilerStats.TextColor3 = Color3.fromRGB(0, 255, 100)
+    profilerStats.TextSize = 11
+    profilerStats.Font = Enum.Font.Code
+    profilerStats.TextXAlignment = Enum.TextXAlignment.Left
+    profilerStats.TextYAlignment = Enum.TextYAlignment.Top
+    profilerStats.TextWrapped = true
+    profilerStats.Parent = profilerPane
+    
+    self.ProfilerPane = {
+        Container = profilerPane,
+        Stats = profilerStats
+    }
+    
+    -- Update profiler stats
+    UIHelpers.SafeConnect(RunService.Heartbeat, function()
+        if not profilerPane.Visible then return end
+        
+        local stats = {}
+        table.insert(stats, string.format("FPS: %.1f", 1 / RunService.Heartbeat:Wait()))
+        table.insert(stats, string.format("Connections: %d", #self._allConnections))
+        table.insert(stats, string.format("Tabs: %d", #self.Tabs))
+        table.insert(stats, string.format("Notifications: %d", #self.Notifications))
+        table.insert(stats, string.format("History: %d", #(self.NotificationHistory or {})))
+        table.insert(stats, string.format("Sliders: %d", #self._sliders))
+        
+        if self.CommandPalette then
+            table.insert(stats, string.format("Commands: %d", #self.CommandPalette.Commands))
+        end
+        
+        table.insert(stats, string.format("Theme: %s", self.Theme == StoppedUI.Themes.Dark and "Dark" or "Light"))
+        table.insert(stats, string.format("Layout: %s", self.LayoutMode))
+        
+        profilerStats.Text = table.concat(stats, "\n")
+    end, self._allConnections)
+end
+
+function StoppedUI:ToggleProfiler()
+    if not self.ProfilerPane then
+        self:CreateProfilerPane()
+    end
+    
+    local pane = self.ProfilerPane.Container
+    pane.Visible = not pane.Visible
+    
+    if pane.Visible then
+        self:Notify({Text = "Profiler enabled", Type = "Info", Duration = 2})
+    else
+        self:Notify({Text = "Profiler disabled", Type = "Info", Duration = 2})
+    end
+end
+
+-- ========================================
+-- DEV MODE INSPECTOR (Enhanced)
 -- ========================================
 function StoppedUI:CreateDevModeInspector()
     local inspector = Instance.new("Frame")
@@ -1218,7 +2088,7 @@ function StoppedUI:ToggleDevMode()
         end
         self:Notify({Text = "Dev Mode Disabled", Type = "Info"})
     end
-
+end
     self.PreviewPane = Instance.new("Frame")
     self.PreviewPane.Name = "PreviewPane"
     self.PreviewPane.Size = UDim2.new(1, -380, 1, -70)
@@ -1469,8 +2339,21 @@ function StoppedUI:Notify(options)
         Error = self.Theme.Error
     }
     
-    -- Debounce similar notifications
-    local window = 3
+    -- Add to history
+    self:AddToHistory({
+        Text = text,
+        SubText = subText,
+        Type = type,
+        ImageHash = imgHash
+    })
+    
+    -- Always show notification panel
+    if self.NotificationPanel then
+        self.NotificationPanel.Visible = true
+    end
+    
+    -- Debounce similar notifications (reduced window for responsiveness)
+    local window = 1  -- Reduced from 3 to 1 second
     if options.Key and self._recentNotif[options.Key] then
         local recent = self._recentNotif[options.Key]
         if tick() - recent.t < window then
@@ -1518,7 +2401,7 @@ function StoppedUI:Notify(options)
     img.Position = UDim2.new(0, 0, 0, 0)
     img.BackgroundTransparency = 1
     img.ImageColor3 = colors[type] or self.Theme.Accent
-    img.Image = "rbxassetid://" .. imgHash
+    img.Image = UIHelpers.ResolveImage(imgHash)
     img.Parent = notif
     UIHelpers.CreateRound(img, self.Theme.Radius - 2)
     
@@ -2359,6 +3242,494 @@ function StoppedUI:Destroy()
     if self.NotifyGui then
         self.NotifyGui:Destroy()
     end
+end
+
+-- ========================================
+-- EXTENSION POINTS (For Developer Customization)
+-- ========================================
+
+--[[
+    EXTENSION GUIDE FOR DEVELOPERS:
+    
+    1. LAYOUT CUSTOMIZATION:
+       - Modify self._leftPaneWidth (0-1 fraction)
+       - Call self:UpdatePaneLayout() to apply
+       - Use self:SetLayoutMode("Compact"|"Normal"|"Expanded")
+    
+    2. COMMAND PALETTE:
+       - Add commands: self:RegisterCommand(name, description, callback)
+       - Commands appear in Ctrl+K palette
+       - Example: window:RegisterCommand("My Action", "Does X", function() ... end)
+    
+    3. CONFIG HOOKS (No Auto-Save):
+       - self.Config.OnRequestSave.Event:Connect(function() ... end)
+       - self.Config.OnRequestLoad.Event:Connect(function() ... end)
+       - Use self.Config.GetState() and self.Config.SetState(state)
+       - IMPORTANT: No writefile/readfile inside UI - you implement storage
+    
+    4. THEME CUSTOMIZATION:
+       - Add custom theme to StoppedUI.Themes table
+       - StoppedUI.Themes.MyTheme = { Background = ..., Accent = ..., etc }
+       - Pass Theme = "MyTheme" in Create()
+       - Use Theme Store UI to browse/apply themes
+    
+    5. TRANSLATIONS (Disabled by Default):
+       - Set TranslationEnabled = true in Create()
+       - Add custom locale to StoppedUI.Translations
+       - Use self:Tr("Key") in your elements
+       - Zero overhead when disabled
+    
+    6. DEV MODE & PROFILER:
+       - Enable DevMode = true in Create()
+       - Toggle with Ctrl+K → "Toggle Dev Mode"
+       - Hover over elements to inspect properties
+       - Enable Profiler to see live performance stats
+    
+    7. RESPONSIVE BREAKPOINTS:
+       - Modify StoppedUI.Breakpoints if needed
+       - Layouts auto-adjust: Mobile/Tablet/Desktop/Wide
+       - Splitter auto-hides on mobile
+    
+    8. SPLITTER:
+       - Enabled by default (EnableSplitter = true)
+       - Drag to resize LeftPane/PreviewPane
+       - Width fraction saved in self._leftPaneWidth
+       - Min/max constraints: 280px - 600px
+    
+    9. SNAP TO EDGES:
+       - Enabled by default (SnapToEdges = true)
+       - Adjust SnapDistance for sensitivity (default: 10px)
+       - Ghost preview shows snap target
+    
+    10. NOTIFICATION SYSTEM:
+        - Always visible (no manual toggle needed)
+        - Automatic history tracking (last 50)
+        - View history: Ctrl+K → "View Notification History"
+        - Custom types: Info, Success, Warning, Error
+    
+    11. HOTKEY CUSTOMIZER:
+        - Register hotkeys: self:RegisterHotkey(name, keyCode, callback, modifiers)
+        - Modifiers: {Ctrl = true, Shift = true, Alt = true}
+        - Manage via: Ctrl+K → "Open Hotkey Manager"
+    
+    12. THEME STORE:
+        - Live preview of all themes
+        - Apply instantly with one click
+        - Automatically updates all UI elements
+        - Access via: Ctrl+K → "Open Theme Store"
+    
+    13. IMAGE HANDLING:
+        - Unified system: UIHelpers.ResolveImage(input)
+        - Supports: rbxassetid://123, "123", "https://...", imgur hash
+        - Auto-fallback to default image
+        - Works in exploit environments with URL support
+    
+    EXAMPLE - Full Customization:
+    
+    local window = StoppedUI:Create({
+        Name = "My App",
+        Theme = "Dark",
+        TranslationEnabled = false,
+        DevMode = false,
+        LayoutMode = "Normal",
+        EnableSplitter = true,
+        SnapToEdges = true,
+        SnapDistance = 10,
+        ConfigEnabled = true
+    })
+    
+    -- Register custom commands (appear in Ctrl+K)
+    window:RegisterCommand("Export Data", "Export to CSV", function()
+        exportData()
+        window:Notify({Text = "Exported!", Type = "Success"})
+    end)
+    
+    window:RegisterCommand("Import Data", "Import from file", function()
+        importData()
+    end)
+    
+    -- Register custom hotkeys
+    window:RegisterHotkey("Quick Save", Enum.KeyCode.S, function()
+        window:RequestSave()
+    end, {Ctrl = true})
+    
+    -- Hook into config (you implement storage)
+    window.Config.OnRequestSave.Event:Connect(function()
+        local state = window.Config.GetState()
+        state.Meta = {
+            SplitterWidth = window._leftPaneWidth,
+            LayoutMode = window.LayoutMode
+        }
+        writefile("config.json", HttpService:JSONEncode(state))
+        window:Notify({Text = "Saved!", Type = "Success"})
+    end)
+    
+    window.Config.OnRequestLoad.Event:Connect(function()
+        if isfile("config.json") then
+            local state = HttpService:JSONDecode(readfile("config.json"))
+            
+            -- Restore meta settings
+            if state.Meta then
+                if state.Meta.SplitterWidth then
+                    window._leftPaneWidth = state.Meta.SplitterWidth
+                    window:UpdatePaneLayout(false)
+                end
+                if state.Meta.LayoutMode then
+                    window:SetLayoutMode(state.Meta.LayoutMode)
+                end
+            end
+            
+            -- Apply element states
+            window.Config.SetState(state)
+            window:Notify({Text = "Loaded!", Type = "Success"})
+        end
+    end)
+    
+    -- Add custom theme
+    StoppedUI.Themes.Cyberpunk = {
+        Background = Color3.fromRGB(10, 10, 20),
+        Card = Color3.fromRGB(20, 20, 35),
+        Secondary = Color3.fromRGB(30, 30, 45),
+        Accent = Color3.fromRGB(255, 0, 150),
+        Text = Color3.fromRGB(0, 255, 255),
+        TextDim = Color3.fromRGB(100, 200, 200),
+        Border = Color3.fromRGB(255, 0, 150),
+        Success = Color3.fromRGB(0, 255, 100),
+        Warning = Color3.fromRGB(255, 200, 0),
+        Error = Color3.fromRGB(255, 50, 50),
+        Radius = 12
+    }
+    
+    -- Change layout programmatically
+    window:SetLayoutMode("Compact")
+    
+    -- Apply custom theme
+    window:ApplyTheme("Cyberpunk")
+    
+    -- Add tabs and elements
+    local tab = window:CreateTab({Name = "Main"})
+    window:AddSlider(tab, {
+        Label = "Speed",
+        Min = 0,
+        Max = 100,
+        Value = 50,
+        Callback = function(v) print(v) end
+    })
+    
+    -- Cleanup on close
+    game:BindToClose(function()
+        window:Destroy()
+    end)
+]]
+
+-- ========================================
+-- QUICK ACTIONS BAR (Floating Action Buttons)
+-- ========================================
+function StoppedUI:CreateQuickActionsBar()
+    local quickBar = Instance.new("Frame")
+    quickBar.Name = "QuickActionsBar"
+    quickBar.Size = UDim2.new(0, 60, 0, 300)
+    quickBar.Position = UDim2.new(0, 10, 0.5, -150)
+    quickBar.AnchorPoint = Vector2.new(0, 0.5)
+    quickBar.BackgroundColor3 = self.Theme.Card
+    quickBar.BackgroundTransparency = 0.1
+    quickBar.BorderSizePixel = 0
+    quickBar.ZIndex = 998
+    quickBar.Visible = false
+    quickBar.Parent = self.Container
+    UIHelpers.CreateRound(quickBar, self.Theme.Radius)
+    UIHelpers.CreateStroke(quickBar, self.Theme.Accent, 1, 0.8)
+    
+    local quickLayout = Instance.new("UIListLayout")
+    quickLayout.Padding = UDim.new(0, 8)
+    quickLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    quickLayout.Parent = quickBar
+    
+    UIHelpers.CreatePadding(quickBar, 8)
+    
+    self.QuickActionsBar = {
+        Container = quickBar,
+        Actions = {}
+    }
+    
+    -- Default quick actions
+    self:AddQuickAction("🎨", "Themes", function()
+        self:ToggleThemeStore()
+    end)
+    
+    self:AddQuickAction("⌨️", "Hotkeys", function()
+        self:ToggleHotkeyCustomizer()
+    end)
+    
+    self:AddQuickAction("📜", "History", function()
+        self:ToggleNotificationHistory()
+    end)
+    
+    self:AddQuickAction("📊", "Profiler", function()
+        self:ToggleProfiler()
+    end)
+    
+    self:AddQuickAction("🔧", "Dev", function()
+        self:ToggleDevMode()
+    end)
+    
+    -- Toggle button for quick bar
+    local toggleQuickBtn = Instance.new("TextButton")
+    toggleQuickBtn.Size = UDim2.new(0, 30, 0, 30)
+    toggleQuickBtn.Position = UDim2.new(0, 10, 0.5, -15)
+    toggleQuickBtn.BackgroundColor3 = self.Theme.Accent
+    toggleQuickBtn.Text = "⚡"
+    toggleQuickBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleQuickBtn.TextSize = 16
+    toggleQuickBtn.Font = Enum.Font.GothamBold
+    toggleQuickBtn.BorderSizePixel = 0
+    toggleQuickBtn.ZIndex = 999
+    toggleQuickBtn.Parent = self.Container
+    UIHelpers.CreateRound(toggleQuickBtn, 15)
+    
+    self.QuickActionsToggle = toggleQuickBtn
+    
+    UIHelpers.SafeConnect(toggleQuickBtn.MouseButton1Click, function()
+        self:ToggleQuickActions()
+    end, self._allConnections)
+    
+    UIHelpers.SafeConnect(toggleQuickBtn.MouseEnter, function()
+        UIHelpers.Tween(toggleQuickBtn, {
+            Size = UDim2.new(0, 35, 0, 35),
+            Rotation = 15
+        }, 0.15)
+    end, self._allConnections)
+    
+    UIHelpers.SafeConnect(toggleQuickBtn.MouseLeave, function()
+        UIHelpers.Tween(toggleQuickBtn, {
+            Size = UDim2.new(0, 30, 0, 30),
+            Rotation = 0
+        }, 0.15)
+    end, self._allConnections)
+end
+
+function StoppedUI:AddQuickAction(icon, tooltip, callback)
+    local actionBtn = Instance.new("TextButton")
+    actionBtn.Size = UDim2.new(0, 44, 0, 44)
+    actionBtn.BackgroundColor3 = self.Theme.Secondary
+    actionBtn.Text = icon
+    actionBtn.TextColor3 = self.Theme.Text
+    actionBtn.TextSize = 20
+    actionBtn.Font = Enum.Font.GothamBold
+    actionBtn.BorderSizePixel = 0
+    actionBtn.Parent = self.QuickActionsBar.Container
+    UIHelpers.CreateRound(actionBtn, self.Theme.Radius)
+    
+    -- Tooltip
+    local tooltipLabel = Instance.new("TextLabel")
+    tooltipLabel.Size = UDim2.new(0, 0, 0, 24)
+    tooltipLabel.Position = UDim2.new(1, 8, 0.5, 0)
+    tooltipLabel.AnchorPoint = Vector2.new(0, 0.5)
+    tooltipLabel.BackgroundColor3 = self.Theme.Background
+    tooltipLabel.Text = tooltip
+    tooltipLabel.TextColor3 = self.Theme.Text
+    tooltipLabel.TextSize = 12
+    tooltipLabel.Font = Enum.Font.Gotham
+    tooltipLabel.Visible = false
+    tooltipLabel.BorderSizePixel = 0
+    tooltipLabel.ZIndex = 1000
+    tooltipLabel.Parent = actionBtn
+    UIHelpers.CreateRound(tooltipLabel, 4)
+    UIHelpers.CreatePadding(tooltipLabel, 8)
+    
+    UIHelpers.SafeConnect(actionBtn.MouseEnter, function()
+        UIHelpers.Tween(actionBtn, {BackgroundColor3 = self.Theme.Accent}, 0.15)
+        tooltipLabel.Visible = true
+        tooltipLabel.Size = UDim2.new(0, 0, 0, 24)
+        UIHelpers.Tween(tooltipLabel, {Size = UDim2.new(0, tooltipLabel.TextBounds.X + 16, 0, 24)}, 0.2)
+    end, self._allConnections)
+    
+    UIHelpers.SafeConnect(actionBtn.MouseLeave, function()
+        UIHelpers.Tween(actionBtn, {BackgroundColor3 = self.Theme.Secondary}, 0.15)
+        UIHelpers.Tween(tooltipLabel, {Size = UDim2.new(0, 0, 0, 24)}, 0.15)
+        task.wait(0.15)
+        tooltipLabel.Visible = false
+    end, self._allConnections)
+    
+    UIHelpers.SafeConnect(actionBtn.MouseButton1Click, function()
+        UIHelpers.Tween(actionBtn, {Size = UDim2.new(0, 40, 0, 40)}, 0.08)
+        task.wait(0.08)
+        UIHelpers.Tween(actionBtn, {Size = UDim2.new(0, 44, 0, 44)}, 0.08)
+        pcall(callback)
+    end, self._allConnections)
+    
+    table.insert(self.QuickActionsBar.Actions, {
+        Button = actionBtn,
+        Tooltip = tooltip,
+        Callback = callback
+    })
+end
+
+function StoppedUI:ToggleQuickActions()
+    local bar = self.QuickActionsBar.Container
+    bar.Visible = not bar.Visible
+    
+    if bar.Visible then
+        bar.Size = UDim2.new(0, 0, 0, 300)
+        bar.BackgroundTransparency = 1
+        UIHelpers.Tween(bar, {Size = UDim2.new(0, 60, 0, 300)}, 0.25)
+        UIHelpers.Tween(bar, {BackgroundTransparency = 0.1}, 0.2)
+        
+        -- Animate toggle button
+        UIHelpers.Tween(self.QuickActionsToggle, {Position = UDim2.new(0, 80, 0.5, -15)}, 0.25)
+    else
+        UIHelpers.Tween(bar, {Size = UDim2.new(0, 0, 0, 300)}, 0.2)
+        UIHelpers.Tween(bar, {BackgroundTransparency = 1}, 0.2)
+        
+        -- Animate toggle button back
+        UIHelpers.Tween(self.QuickActionsToggle, {Position = UDim2.new(0, 10, 0.5, -15)}, 0.25)
+    end
+end
+
+-- ========================================
+-- SNIPPET/TEMPLATE SYSTEM
+-- ========================================
+StoppedUI.Snippets = {}
+
+function StoppedUI:SaveElementAsSnippet(element, snippetName)
+    if not element or not snippetName then return false end
+    
+    local snippet = {
+        Type = element.Type,
+        Name = snippetName,
+        Config = {},
+        Timestamp = os.date("%Y-%m-%d %H:%M:%S")
+    }
+    
+    -- Save element-specific config
+    if element.Type == "Toggle" then
+        snippet.Config = {
+            Text = element.Container:FindFirstChildOfClass("TextLabel").Text,
+            Default = element:GetValue()
+        }
+    elseif element.Type == "Slider" then
+        snippet.Config = {
+            Label = element.Slider.ValueLabel.Text,
+            Min = element.Slider.Min,
+            Max = element.Slider.Max,
+            Value = element.Slider.Value,
+            Height = 6
+        }
+    elseif element.Type == "Button" then
+        snippet.Config = {
+            Text = element.Button.Text
+        }
+    end
+    
+    StoppedUI.Snippets[snippetName] = snippet
+    
+    self:Notify({
+        Text = "Snippet saved: " .. snippetName,
+        Type = "Success",
+        Duration = 2
+    })
+    
+    return true
+end
+
+function StoppedUI:LoadSnippet(tab, snippetName, callback)
+    local snippet = StoppedUI.Snippets[snippetName]
+    if not snippet then
+        self:Notify({
+            Text = "Snippet not found: " .. snippetName,
+            Type = "Error",
+            Duration = 3
+        })
+        return nil
+    end
+    
+    local element
+    
+    if snippet.Type == "Toggle" then
+        element = self:AddToggle(tab, {
+            Text = snippet.Config.Text,
+            Default = snippet.Config.Default,
+            Callback = callback
+        })
+    elseif snippet.Type == "Slider" then
+        element = self:AddSlider(tab, {
+            Label = snippet.Config.Label,
+            Min = snippet.Config.Min,
+            Max = snippet.Config.Max,
+            Value = snippet.Config.Value,
+            Height = snippet.Config.Height or 6,
+            Callback = callback
+        })
+    elseif snippet.Type == "Button" then
+        element = self:AddButton(tab, {
+            Text = snippet.Config.Text,
+            Callback = callback
+        })
+    end
+    
+    self:Notify({
+        Text = "Snippet loaded: " .. snippetName,
+        Type = "Success",
+        Duration = 2
+    })
+    
+    return element
+end
+
+function StoppedUI:ListSnippets()
+    local snippets = {}
+    for name, snippet in pairs(StoppedUI.Snippets) do
+        table.insert(snippets, {
+            Name = name,
+            Type = snippet.Type,
+            Timestamp = snippet.Timestamp
+        })
+    end
+    return snippets
+end
+
+function StoppedUI:ExportSnippet(snippetName)
+    local snippet = StoppedUI.Snippets[snippetName]
+    if not snippet then return nil end
+    
+    local encoded = HttpService:JSONEncode(snippet)
+    
+    if setclipboard then
+        setclipboard(encoded)
+        self:Notify({
+            Text = "Snippet copied to clipboard!",
+            Type = "Success",
+            Duration = 2
+        })
+    end
+    
+    return encoded
+end
+
+function StoppedUI:ImportSnippet(encoded, snippetName)
+    local ok, snippet = pcall(function()
+        return HttpService:JSONDecode(encoded)
+    end)
+    
+    if not ok or not snippet then
+        self:Notify({
+            Text = "Invalid snippet data",
+            Type = "Error",
+            Duration = 3
+        })
+        return false
+    end
+    
+    snippetName = snippetName or snippet.Name or "Imported_" .. math.random(1000, 9999)
+    StoppedUI.Snippets[snippetName] = snippet
+    
+    self:Notify({
+        Text = "Snippet imported: " .. snippetName,
+        Type = "Success",
+        Duration = 2
+    })
+    
+    return true
 end
 
 return StoppedUI
