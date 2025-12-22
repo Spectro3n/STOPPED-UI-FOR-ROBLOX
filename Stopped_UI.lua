@@ -1,31 +1,67 @@
 local StoppedUI = {}
 StoppedUI.__index = StoppedUI
-StoppedUI.Version = "4.0.1"
+StoppedUI.Version = "5.1.0"
 
 -- Services
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
+local TextService = game:GetService("TextService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
--- Theme System
+-- Layout Modes
+StoppedUI.LayoutModes = {
+    Compact = "Compact",
+    Normal = "Normal",
+    Expanded = "Expanded"
+}
+
+-- Responsive Breakpoints
+StoppedUI.Breakpoints = {
+    Mobile = 480,
+    Tablet = 700,
+    Desktop = 1200
+}
+
+-- ========================================
+-- THEME SYSTEM (Modular & Customizable)
+-- ========================================
 StoppedUI.Themes = {
     Dark = {
-        Background = Color3.fromRGB(20, 20, 20),
-        Secondary = Color3.fromRGB(30, 30, 30),
-        Accent = Color3.fromRGB(100, 200, 255),
-        Text = Color3.fromRGB(240, 240, 240),
-        TextDim = Color3.fromRGB(160, 160, 160),
-        Border = Color3.fromRGB(50, 50, 50),
+        Background = Color3.fromRGB(17, 17, 18),
+        Card = Color3.fromRGB(28, 29, 31),
+        Secondary = Color3.fromRGB(35, 35, 37),
+        Accent = Color3.fromRGB(82, 171, 255),
+        Text = Color3.fromRGB(220, 220, 220),
+        TextDim = Color3.fromRGB(156, 156, 156),
+        Border = Color3.fromRGB(50, 50, 52),
         Success = Color3.fromRGB(100, 255, 100),
         Warning = Color3.fromRGB(255, 200, 100),
-        Error = Color3.fromRGB(255, 100, 100)
+        Error = Color3.fromRGB(255, 100, 100),
+        Radius = 8
+    },
+    Light = {
+        Background = Color3.fromRGB(240, 240, 242),
+        Card = Color3.fromRGB(255, 255, 255),
+        Secondary = Color3.fromRGB(248, 248, 250),
+        Accent = Color3.fromRGB(0, 122, 255),
+        Text = Color3.fromRGB(30, 30, 30),
+        TextDim = Color3.fromRGB(120, 120, 120),
+        Border = Color3.fromRGB(200, 200, 205),
+        Success = Color3.fromRGB(40, 200, 40),
+        Warning = Color3.fromRGB(255, 150, 0),
+        Error = Color3.fromRGB(255, 60, 60),
+        Radius = 8
     }
 }
 
--- Translation System
+-- ========================================
+-- TRANSLATION SYSTEM (Disabled by default - Dev can enable)
+-- ========================================
+StoppedUI.TranslationEnabled = false  -- Dev must enable explicitly
+
 StoppedUI.Translations = {
     en = {
         Close = "Close",
@@ -81,28 +117,58 @@ StoppedUI.Translations = {
     }
 }
 
--- Utility Functions
-local function Tween(obj, props, duration)
-    duration = duration or 0.3
-    TweenService:Create(obj, TweenInfo.new(duration, Enum.EasingStyle.Quint), props):Play()
+-- ========================================
+-- UI HELPERS (Centralized Utilities)
+-- ========================================
+local UIHelpers = {}
+
+function UIHelpers.SafeConnect(signal, fn, connTable)
+    local conn = signal:Connect(function(...)
+        local ok, err = pcall(fn, ...)
+        if not ok then
+            warn("[StoppedUI] SafeConnect error:", err)
+        end
+    end)
+    if connTable then
+        table.insert(connTable, conn)
+    end
+    return conn
 end
 
-local function CreateRound(parent, radius)
+function UIHelpers.CleanupConnections(list)
+    for _, c in ipairs(list) do
+        if c and typeof(c) == "RBXScriptConnection" then
+            pcall(function() c:Disconnect() end)
+        end
+    end
+    table.clear(list)
+end
+
+function UIHelpers.Tween(obj, props, duration)
+    if not obj or not obj.Parent then return end
+    duration = duration or 0.3
+    local tween = TweenService:Create(obj, TweenInfo.new(duration, Enum.EasingStyle.Quint), props)
+    tween:Play()
+    return tween
+end
+
+function UIHelpers.CreateRound(parent, radius)
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, radius or 8)
     corner.Parent = parent
     return corner
 end
 
-local function CreateStroke(parent, color, thickness)
+function UIHelpers.CreateStroke(parent, color, thickness, transparency)
     local stroke = Instance.new("UIStroke")
     stroke.Color = color or Color3.fromRGB(50, 50, 50)
     stroke.Thickness = thickness or 1
+    stroke.Transparency = transparency or 0
     stroke.Parent = parent
     return stroke
 end
 
-local function CreatePadding(parent, all)
+function UIHelpers.CreatePadding(parent, all)
     local padding = Instance.new("UIPadding")
     padding.PaddingTop = UDim.new(0, all or 5)
     padding.PaddingBottom = UDim.new(0, all or 5)
@@ -112,161 +178,352 @@ local function CreatePadding(parent, all)
     return padding
 end
 
-local function Clamp(n, lo, hi)
+function UIHelpers.CenterLabelPixelPerfect(label, parent, connTable)
+    local function recalc()
+        if not label.Parent then return end
+        local maxW = parent and parent.AbsoluteSize.X or 2000
+        local size = TextService:GetTextSize(
+            label.Text,
+            label.TextSize,
+            label.Font,
+            Vector2.new(maxW, 10000)
+        )
+        label.Size = UDim2.new(0, math.ceil(size.X), 0, math.ceil(size.Y))
+        label.Position = UDim2.new(0.5, -math.ceil(size.X)/2, 0.5, -math.ceil(size.Y)/2)
+    end
+
+    UIHelpers.SafeConnect(label:GetPropertyChangedSignal("Text"), recalc, connTable)
+    UIHelpers.SafeConnect(label:GetPropertyChangedSignal("TextSize"), recalc, connTable)
+    UIHelpers.SafeConnect(label:GetPropertyChangedSignal("Font"), recalc, connTable)
+    if parent then
+        UIHelpers.SafeConnect(parent:GetPropertyChangedSignal("AbsoluteSize"), recalc, connTable)
+    end
+
+    recalc()
+end
+
+function UIHelpers.Clamp(n, lo, hi)
     return math.max(lo, math.min(hi, n))
 end
 
--- Translation Helper
-function StoppedUI:Tr(key)
-    local locale = self.Locale or "en"
-    if self.Translations[locale] and self.Translations[locale][key] then
-        return self.Translations[locale][key]
+function UIHelpers.SnapToEdge(position, size, viewport, snapDistance)
+    snapDistance = snapDistance or 10
+    local x, y = position.X, position.Y
+    
+    -- Snap to left
+    if x < snapDistance then
+        x = 0
     end
-    return key
+    
+    -- Snap to right
+    if viewport.X - (x + size.X) < snapDistance then
+        x = viewport.X - size.X
+    end
+    
+    -- Snap to top
+    if y < snapDistance then
+        y = 0
+    end
+    
+    -- Snap to bottom
+    if viewport.Y - (y + size.Y) < snapDistance then
+        y = viewport.Y - size.Y
+    end
+    
+    return Vector2.new(x, y)
 end
 
-function StoppedUI:ApplyTranslations()
-    for _, entry in pairs(self._translatedElements or {}) do
-        local inst = entry.Instance
-        local key = entry.Key
-        if inst and key and self.Translations[self.Locale] and self.Translations[self.Locale][key] then
-            pcall(function() inst.Text = self.Translations[self.Locale][key] end)
-        end
-    end
-end
-
-function StoppedUI:StatusNotify(name, status, duration)
-    duration = duration or 3
-    local mapping = {
-        Success = {Type = 'Success', Text = name .. ' ✓'},
-        Error   = {Type = 'Error',   Text = name .. ' ✖'},
-        Warning = {Type = 'Warning', Text = name .. ' !'},
-        Info    = {Type = 'Info',    Text = name}
-    }
-    local entry = mapping[status] or mapping.Info
-    self:Notify({ Text = entry.Text, Type = entry.Type, Duration = duration })
-end
-
--- Imgur Image Loader
-function StoppedUI:LoadImgurImage(hash)
-    if self._imgCache[hash] then
-        return self._imgCache[hash]
-    end
-    
-    local candidates = {
-        string.format("https://i.imgur.com/%s.png", hash),
-        string.format("https://i.imgur.com/%s.jpg", hash),
-        string.format("https://i.imgur.com/%s.gif", hash)
-    }
-    
-    local chosen = candidates[1]
-    
-    if request then
-        for _, url in ipairs(candidates) do
-            local ok, resp = pcall(function()
-                return request({Url = url, Method = "HEAD", Timeout = 3})
-            end)
-            if ok and resp and (resp.StatusCode == 200 or resp.StatusCode == 0) then
-                chosen = url
-                break
-            end
-        end
-    end
-    
-    self._imgCache[hash] = chosen
-    return chosen
-end
-
--- SetImageFromImgur
-function StoppedUI:SetImageFromImgur(target, hashOrUrl, preferredFallback)
-    if not target then return end
-    
-    local function chooseFallback()
-        if preferredFallback and type(preferredFallback) == "string" then
-            return preferredFallback
-        end
-        if self.FallbackImages and #self.FallbackImages > 0 then
-            return self.FallbackImages[1]
-        end
-        return nil
-    end
-    
-    local function applyUrl(url)
-        if not url then
-            target.Image = ""
-            target.ImageTransparency = 1
-            return
-        end
-        if not url:match("^https?://") then
-            local final = self:LoadImgurImage(url) or ("https://i.imgur.com/" .. url .. ".png")
-            target.Image = final
-        else
-            target.Image = url
-        end
-    end
-    
-    local function validateAndApply(urls)
-        for _, u in ipairs(urls) do
-            if request then
-                local ok, resp = pcall(function()
-                    return request({Url = u, Method = "HEAD", Timeout = 4})
-                end)
-                if ok and resp and (resp.StatusCode == 200 or resp.StatusCode == 0) then
-                    applyUrl(u)
-                    return
-                end
-            else
-                applyUrl(u)
-                return
-            end
-        end
-        applyUrl(chooseFallback())
-    end
-    
-    if not hashOrUrl or hashOrUrl == "" then
-        applyUrl(chooseFallback())
-        return
-    end
-    
-    if hashOrUrl:match("^https?://") then
-        validateAndApply({hashOrUrl})
+function UIHelpers.GetResponsiveBreakpoint(viewportX)
+    if viewportX < 480 then
+        return "Mobile"
+    elseif viewportX < 700 then
+        return "Tablet"
+    elseif viewportX < 1200 then
+        return "Desktop"
     else
-        local cands = {
-            string.format("https://i.imgur.com/%s.png", hashOrUrl),
-            string.format("https://i.imgur.com/%s.jpg", hashOrUrl),
-            string.format("https://i.imgur.com/%s.gif", hashOrUrl)
-        }
-        validateAndApply(cands)
+        return "Wide"
     end
 end
 
--- Main UI Creation
+-- ========================================
+-- SLIDER COMPONENT (Enhanced & Modular)
+-- ========================================
+local SliderComponent = {}
+SliderComponent.__index = SliderComponent
+
+function SliderComponent.new(parent, opts, connTable)
+    opts = opts or {}
+    local min = opts.Min or 0
+    local max = opts.Max or 100
+    local initial = UIHelpers.Clamp(opts.Value or min, min, max)
+    local accent = opts.Accent or Color3.fromRGB(82, 171, 255)
+    local bgColor = opts.BackgroundColor or Color3.fromRGB(45, 45, 47)
+    local height = opts.Height or 6
+    local callback = opts.Callback
+
+    -- Container
+    local container = Instance.new("Frame")
+    container.Name = "StoppedSlider"
+    container.Parent = parent
+    container.BackgroundTransparency = 1
+    container.Size = opts.Size or UDim2.new(1, 0, 0, 32)
+    container.AnchorPoint = opts.AnchorPoint or Vector2.new(0, 0)
+    container.LayoutOrder = opts.LayoutOrder or 0
+
+    -- Label
+    local label
+    if opts.Label then
+        label = Instance.new("TextLabel")
+        label.Name = "Label"
+        label.Parent = container
+        label.BackgroundTransparency = 1
+        label.Position = UDim2.new(0, 0, 0, 0)
+        label.Size = UDim2.new(0.7, 0, 0, 14)
+        label.Font = opts.Font or Enum.Font.Gotham
+        label.Text = tostring(opts.Label)
+        label.TextSize = opts.TextSize or 12
+        label.TextColor3 = opts.TextColor or Color3.fromRGB(220, 220, 220)
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.TextYAlignment = Enum.TextYAlignment.Center
+    end
+
+    -- Value Display
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Name = "ValueLabel"
+    valueLabel.Parent = container
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.Position = UDim2.new(0.7, 0, 0, 0)
+    valueLabel.Size = UDim2.new(0.3, 0, 0, 14)
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.Text = tostring(math.floor(initial * 10) / 10)
+    valueLabel.TextSize = 12
+    valueLabel.TextColor3 = accent
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
+    valueLabel.TextYAlignment = Enum.TextYAlignment.Center
+
+    -- Track
+    local track = Instance.new("Frame")
+    track.Name = "Track"
+    track.Parent = container
+    track.BackgroundColor3 = bgColor
+    track.Size = UDim2.new(1, -8, 0, height)
+    track.Position = UDim2.new(0, 4, 0, 18)
+    UIHelpers.CreateRound(track, height / 2)
+    UIHelpers.CreateStroke(track, Color3.fromRGB(60, 60, 62), 1, 0.85)
+
+    -- Fill
+    local fill = Instance.new("Frame")
+    fill.Name = "Fill"
+    fill.Parent = track
+    fill.BackgroundColor3 = accent
+    fill.Size = UDim2.new((initial - min) / math.max(1, (max - min)), 0, 1, 0)
+    fill.Position = UDim2.new(0, 0, 0, 0)
+    fill.BorderSizePixel = 0
+    UIHelpers.CreateRound(fill, height / 2)
+
+    -- Gradient on fill
+    local gradient = Instance.new("UIGradient")
+    gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, accent),
+        ColorSequenceKeypoint.new(1, accent:Lerp(Color3.new(1, 1, 1), 0.1))
+    })
+    gradient.Rotation = 0
+    gradient.Parent = fill
+
+    -- Knob
+    local knobSize = math.max(height * 2.5, 14)
+    local knob = Instance.new("Frame")
+    knob.Name = "Knob"
+    knob.Parent = container
+    knob.BackgroundColor3 = accent
+    knob.Size = UDim2.new(0, knobSize, 0, knobSize)
+    knob.AnchorPoint = Vector2.new(0.5, 0.5)
+    knob.Position = UDim2.new(fill.Size.X.Scale, 0, 0, 18 + height / 2)
+    knob.BorderSizePixel = 0
+    knob.ZIndex = 5
+    UIHelpers.CreateRound(knob, knobSize / 2)
+    UIHelpers.CreateStroke(knob, Color3.fromRGB(255, 255, 255), 2, 0.7)
+
+    -- Knob glow
+    local glow = Instance.new("ImageLabel")
+    glow.Name = "Glow"
+    glow.Parent = knob
+    glow.Size = UDim2.new(2, 0, 2, 0)
+    glow.Position = UDim2.new(0.5, 0, 0.5, 0)
+    glow.AnchorPoint = Vector2.new(0.5, 0.5)
+    glow.BackgroundTransparency = 1
+    glow.Image = "rbxassetid://3570695787"
+    glow.ImageColor3 = accent
+    glow.ImageTransparency = 0.85
+    glow.ZIndex = 4
+
+    -- Self object
+    local self = setmetatable({
+        Container = container,
+        Track = track,
+        Fill = fill,
+        Knob = knob,
+        ValueLabel = valueLabel,
+        Min = min,
+        Max = max,
+        Value = initial,
+        Callback = callback,
+        OnChanged = Instance.new("BindableEvent"),
+        _connections = {}
+    }, SliderComponent)
+
+    -- Set value function
+    local function setValue(v, noCallback)
+        v = UIHelpers.Clamp(v, self.Min, self.Max)
+        self.Value = v
+        
+        -- Round for display
+        local displayValue = math.floor(v * 10) / 10
+        valueLabel.Text = tostring(displayValue)
+        
+        local frac = (v - self.Min) / math.max(1, (self.Max - self.Min))
+        
+        -- Animate fill
+        UIHelpers.Tween(fill, {Size = UDim2.new(frac, 0, 1, 0)}, 0.12)
+        
+        -- Animate knob
+        UIHelpers.Tween(knob, {Position = UDim2.new(frac, 0, 0, 18 + height / 2)}, 0.12)
+        
+        if not noCallback then
+            self.OnChanged:Fire(v)
+            if self.Callback then
+                pcall(self.Callback, v)
+            end
+        end
+    end
+
+    -- Initial layout update
+    UIHelpers.SafeConnect(track:GetPropertyChangedSignal("AbsoluteSize"), function()
+        setValue(self.Value, true)
+    end, self._connections)
+
+    -- Input handling
+    local dragging = false
+    
+    local function updateFromInput(inputPosX)
+        local startX = track.AbsolutePosition.X
+        local width = track.AbsoluteSize.X
+        local localX = UIHelpers.Clamp(inputPosX - startX, 0, width)
+        local frac = localX / math.max(1, width)
+        local v = self.Min + frac * (self.Max - self.Min)
+        setValue(v)
+    end
+
+    local function onInputBegan(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            -- Scale up knob
+            UIHelpers.Tween(knob, {Size = UDim2.new(0, knobSize * 1.15, 0, knobSize * 1.15)}, 0.1)
+            UIHelpers.Tween(glow, {ImageTransparency = 0.7}, 0.1)
+            updateFromInput(input.Position.X)
+        end
+    end
+
+    local function onInputEnded(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+            -- Scale down knob
+            UIHelpers.Tween(knob, {Size = UDim2.new(0, knobSize, 0, knobSize)}, 0.15)
+            UIHelpers.Tween(glow, {ImageTransparency = 0.85}, 0.15)
+        end
+    end
+
+    UIHelpers.SafeConnect(container.InputBegan, onInputBegan, self._connections)
+    UIHelpers.SafeConnect(container.InputEnded, onInputEnded, self._connections)
+    UIHelpers.SafeConnect(knob.InputBegan, onInputBegan, self._connections)
+    UIHelpers.SafeConnect(knob.InputEnded, onInputEnded, self._connections)
+
+    -- Drag update
+    UIHelpers.SafeConnect(RunService.RenderStepped, function()
+        if dragging then
+            local mouse = game.Players.LocalPlayer:GetMouse()
+            updateFromInput(mouse.X)
+        end
+    end, self._connections)
+
+    -- Public methods
+    function self:SetValue(v)
+        setValue(v, true)
+    end
+
+    function self:GetValue()
+        return self.Value
+    end
+
+    function self:Destroy()
+        UIHelpers.CleanupConnections(self._connections)
+        if self.OnChanged then
+            self.OnChanged:Destroy()
+        end
+        container:Destroy()
+    end
+
+    -- Add to parent connections if provided
+    if connTable then
+        for _, conn in ipairs(self._connections) do
+            table.insert(connTable, conn)
+        end
+    end
+
+    return self
+end
+
+-- ========================================
+-- MAIN UI CREATION
+-- ========================================
 function StoppedUI:Create(config)
     local self = setmetatable({}, StoppedUI)
     
     config = config or {}
     self.Name = config.Name or "StoppedUI"
-    self.Theme = StoppedUI.Themes[config.Theme or "Dark"]
+    self.Theme = config.Theme and StoppedUI.Themes[config.Theme] or StoppedUI.Themes.Dark
     self.DefaultNotificationDuration = config.DefaultNotificationDuration or 5
     self.MaxNotifications = config.MaxNotifications or 6
     self.NotificationBellImgurHash = config.NotificationBellImgurHash or "3926305904"
     self.Locale = config.Locale or "en"
     self.ShowPreview = config.ShowPreview == nil and false or config.ShowPreview
+    self.ConfigEnabled = config.ConfigEnabled or false
+    self.TranslationEnabled = config.TranslationEnabled or false
+    self.DevMode = config.DevMode or false
+    self.LayoutMode = config.LayoutMode or StoppedUI.LayoutModes.Normal
+    self.EnableSplitter = config.EnableSplitter == nil and true or config.EnableSplitter
+    self.SnapToEdges = config.SnapToEdges == nil and true or config.SnapToEdges
+    self.SnapDistance = config.SnapDistance or 10
     
     self._imgCache = {}
     self._keybinds = {}
     self._notificationPool = {}
-    self._configs = {}
-    self._configCallbacks = {}
-    self._dropdownRenderConnections = {}
-    self._notificationPanelConn = nil
     self._recentNotif = {}
     self._allConnections = {}
     self._translatedElements = {}
+    self._sliders = {}
+    self._elements = {}
+    self._leftPaneWidth = 0.42  -- Fluid width (42% of container)
+    self._minLeftPaneWidth = 280
+    self._maxLeftPaneWidth = 600
+    self._commandPaletteVisible = false
 
     if not self.FallbackImages then
         self.FallbackImages = {"https://i.imgur.com/placeholder.png"}
     end
+    
+    -- Config System (Hook-based, not automatic)
+    self.Config = {
+        Enabled = self.ConfigEnabled,
+        OnRequestSave = Instance.new("BindableEvent"),
+        OnRequestLoad = Instance.new("BindableEvent"),
+        GetState = function()
+            return self:GetConfigState()
+        end,
+        SetState = function(state)
+            return self:SetConfigState(state)
+        end
+    }
     
     -- Create ScreenGui
     self.ScreenGui = Instance.new("ScreenGui")
@@ -284,19 +541,36 @@ function StoppedUI:Create(config)
     end
     
     self:CreateNotificationBell()
+    self:CreateMainContainer()
+    self:SetupResponsiveness()
+    
+    -- Opening animation
+    self.Container.Size = UDim2.new(0, 0, 0, 0)
+    self.Container.BackgroundTransparency = 1
+    UIHelpers.Tween(self.Container, {Size = UDim2.new(0, 800, 0, 550)}, 0.5)
+    UIHelpers.Tween(self.Container, {BackgroundTransparency = 0}, 0.4)
+    
+    return self
+end
+
+function StoppedUI:CreateMainContainer()
+    -- Calculate responsive initial position
+    local viewport = workspace.CurrentCamera.ViewportSize
+    local initialX = UIHelpers.Clamp(viewport.X * 0.06, 16, 300)
+    local initialY = UIHelpers.Clamp(viewport.Y * 0.12, 16, 250)
     
     -- Main Container
     self.Container = Instance.new("Frame")
     self.Container.Name = "MainContainer"
     self.Container.Size = UDim2.new(0, 800, 0, 550)
-    self.Container.Position = UDim2.new(0, 200, 0, 150)
+    self.Container.Position = UDim2.new(0, initialX, 0, initialY)
     self.Container.AnchorPoint = Vector2.new(0, 0)
     self.Container.BackgroundColor3 = self.Theme.Background
     self.Container.BorderSizePixel = 0
     self.Container.ClipsDescendants = true
     self.Container.Parent = self.ScreenGui
-    CreateRound(self.Container, 12)
-    CreateStroke(self.Container, self.Theme.Border, 2)
+    UIHelpers.CreateRound(self.Container, self.Theme.Radius + 4)
+    UIHelpers.CreateStroke(self.Container, self.Theme.Border, 2, 0.3)
     
     -- Shadow
     local shadow = Instance.new("ImageLabel")
@@ -307,18 +581,28 @@ function StoppedUI:Create(config)
     shadow.BackgroundTransparency = 1
     shadow.Image = "rbxassetid://5554236805"
     shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
-    shadow.ImageTransparency = 0.5
+    shadow.ImageTransparency = 0.4
     shadow.ZIndex = -1
     shadow.Parent = self.Container
     
+    self:CreateTopbar()
+    self:CreateContent()
+    self:CreateFooter()
+    self:MakeDraggable()
+    
+    self.Tabs = {}
+    self.CurrentTab = nil
+end
+
+function StoppedUI:CreateTopbar()
     -- Topbar
     self.Topbar = Instance.new("Frame")
     self.Topbar.Name = "Topbar"
     self.Topbar.Size = UDim2.new(1, 0, 0, 50)
-    self.Topbar.BackgroundColor3 = self.Theme.Secondary
+    self.Topbar.BackgroundColor3 = self.Theme.Card
     self.Topbar.BorderSizePixel = 0
     self.Topbar.Parent = self.Container
-    CreateRound(self.Topbar, 12)
+    UIHelpers.CreateRound(self.Topbar, self.Theme.Radius + 4)
     
     local topbarBorder = Instance.new("Frame")
     topbarBorder.Size = UDim2.new(1, 0, 0, 2)
@@ -327,7 +611,7 @@ function StoppedUI:Create(config)
     topbarBorder.BorderSizePixel = 0
     topbarBorder.Parent = self.Topbar
     
-    -- Title
+    -- Title (Centered)
     self.Title = Instance.new("TextLabel")
     self.Title.Name = "Title"
     self.Title.Size = UDim2.new(0, 200, 1, 0)
@@ -338,6 +622,7 @@ function StoppedUI:Create(config)
     self.Title.TextSize = 18
     self.Title.Font = Enum.Font.GothamBold
     self.Title.TextXAlignment = Enum.TextXAlignment.Left
+    self.Title.TextYAlignment = Enum.TextYAlignment.Center
     self.Title.Parent = self.Topbar
     
     -- Logo
@@ -348,49 +633,37 @@ function StoppedUI:Create(config)
     logo.BackgroundTransparency = 1
     logo.ImageColor3 = self.Theme.Accent
     logo.Parent = self.Topbar
-    CreateRound(logo, 6)
+    UIHelpers.CreateRound(logo, 6)
     self.Logo = logo
-    
-    if config.Logo then
-        self:SetImageFromImgur(logo, config.Logo, "3944680095")
-    else
-        logo.Image = "rbxassetid://3944680095"
-    end
     
     -- Close Button
     local closeBtn = Instance.new("TextButton")
     closeBtn.Size = UDim2.new(0, 40, 0, 40)
     closeBtn.Position = UDim2.new(1, -45, 0.5, 0)
     closeBtn.AnchorPoint = Vector2.new(0, 0.5)
-    closeBtn.BackgroundColor3 = self.Theme.Secondary
+    closeBtn.BackgroundColor3 = self.Theme.Card
     closeBtn.Text = "×"
     closeBtn.TextColor3 = self.Theme.Text
     closeBtn.TextSize = 24
     closeBtn.Font = Enum.Font.GothamBold
     closeBtn.BorderSizePixel = 0
     closeBtn.Parent = self.Topbar
-    CreateRound(closeBtn, 8)
+    UIHelpers.CreateRound(closeBtn, self.Theme.Radius)
     
-    closeBtn.MouseEnter:Connect(function()
-        Tween(closeBtn, {BackgroundColor3 = self.Theme.Error}, 0.2)
-    end)
+    UIHelpers.SafeConnect(closeBtn.MouseEnter, function()
+        UIHelpers.Tween(closeBtn, {BackgroundColor3 = self.Theme.Error}, 0.2)
+    end, self._allConnections)
     
-    closeBtn.MouseLeave:Connect(function()
-        Tween(closeBtn, {BackgroundColor3 = self.Theme.Secondary}, 0.2)
-    end)
+    UIHelpers.SafeConnect(closeBtn.MouseLeave, function()
+        UIHelpers.Tween(closeBtn, {BackgroundColor3 = self.Theme.Card}, 0.2)
+    end, self._allConnections)
     
-    closeBtn.MouseButton1Click:Connect(function()
-        Tween(self.Container, {Size = UDim2.new(0, 0, 0, 0)}, 0.35)
-        Tween(self.Container, {BackgroundTransparency = 1}, 0.35)
-        task.delay(0.36, function()
-            if self and self.ScreenGui then
-                self.ScreenGui.Enabled = false
-                self.Container.Size = UDim2.new(0, 800, 0, 550)
-                self.Container.BackgroundTransparency = 0
-            end
-        end)
-    end)
-    
+    UIHelpers.SafeConnect(closeBtn.MouseButton1Click, function()
+        self:Hide()
+    end, self._allConnections)
+end
+
+function StoppedUI:CreateContent()
     -- Content Container
     self.Content = Instance.new("Frame")
     self.Content.Name = "Content"
@@ -419,34 +692,53 @@ function StoppedUI:Create(config)
     
     self.TabButtonContainer = tabsRow
     
-    -- Left Pane
+    -- Left Pane (Scrollable) - FLUID WIDTH
     self.LeftPane = Instance.new("ScrollingFrame")
     self.LeftPane.Name = "LeftPane"
-    self.LeftPane.Size = UDim2.new(0, 350, 1, -70)
+    self.LeftPane.Size = UDim2.new(self._leftPaneWidth, 0, 1, -70)
     self.LeftPane.Position = UDim2.new(0, 10, 0, 70)
     self.LeftPane.BackgroundTransparency = 1
     self.LeftPane.BorderSizePixel = 0
     self.LeftPane.ScrollBarThickness = 4
     self.LeftPane.ScrollBarImageColor3 = self.Theme.Accent
+    self.LeftPane.CanvasSize = UDim2.new(0, 0, 0, 0)
+    self.LeftPane.AutomaticCanvasSize = Enum.AutomaticSize.Y
     self.LeftPane.Parent = self.Content
-    CreatePadding(self.LeftPane, 5)
+    UIHelpers.CreatePadding(self.LeftPane, 5)
     
     local leftLayout = Instance.new("UIListLayout")
     leftLayout.Padding = UDim.new(0, 10)
     leftLayout.SortOrder = Enum.SortOrder.LayoutOrder
     leftLayout.Parent = self.LeftPane
     
+    -- Create Splitter (if enabled)
+    if self.EnableSplitter and self.ShowPreview then
+        self:CreateSplitter()
+    end
+    
     -- Preview Pane
+    self:CreatePreviewPane()
+    
+    -- Command Palette
+    self:CreateCommandPalette()
+    
+    -- Dev Mode Inspector (if enabled)
+    if self.DevMode then
+        self:CreateDevModeInspector()
+    end
+end
+
+function StoppedUI:CreatePreviewPane()
     self.PreviewPane = Instance.new("Frame")
     self.PreviewPane.Name = "PreviewPane"
-    self.PreviewPane.Size = UDim2.new(1, -380, 1, -70)
-    self.PreviewPane.Position = UDim2.new(0, 370, 0, 70)
-    self.PreviewPane.BackgroundColor3 = self.Theme.Background
+    self.PreviewPane.Size = UDim2.new(1 - self._leftPaneWidth, -30, 1, -70)
+    self.PreviewPane.Position = UDim2.new(self._leftPaneWidth, 20, 0, 70)
+    self.PreviewPane.BackgroundColor3 = self.Theme.Card
     self.PreviewPane.BorderSizePixel = 0
     self.PreviewPane.Visible = self.ShowPreview
     self.PreviewPane.Parent = self.Content
-    CreateRound(self.PreviewPane, 8)
-    CreateStroke(self.PreviewPane, self.Theme.Border)
+    UIHelpers.CreateRound(self.PreviewPane, self.Theme.Radius)
+    UIHelpers.CreateStroke(self.PreviewPane, self.Theme.Border, 1, 0.85)
     
     local previewCanvas = Instance.new("Frame")
     previewCanvas.Name = "PreviewCanvas"
@@ -456,27 +748,32 @@ function StoppedUI:Create(config)
     previewCanvas.ClipsDescendants = true
     previewCanvas.Parent = self.PreviewPane
     
+    -- Preview Label (CENTERED)
     local previewLabel = Instance.new("TextLabel")
     previewLabel.Name = "PreviewLabel"
-    previewLabel.Size = UDim2.new(1, 0, 0, 20)
-    previewLabel.Position = UDim2.new(0, 10, 0, 10)
+    previewLabel.Size = UDim2.new(1, -20, 0, 24)
+    previewLabel.Position = UDim2.new(0.5, 0, 0, 10)
+    previewLabel.AnchorPoint = Vector2.new(0.5, 0)
     previewLabel.BackgroundTransparency = 1
     previewLabel.Text = self:Tr("Preview")
     previewLabel.TextColor3 = self.Theme.TextDim
     previewLabel.Font = Enum.Font.Gotham
     previewLabel.TextSize = 12
-    previewLabel.TextXAlignment = Enum.TextXAlignment.Left
+    previewLabel.TextXAlignment = Enum.TextXAlignment.Center
+    previewLabel.TextYAlignment = Enum.TextYAlignment.Center
+    previewLabel.TextWrapped = false
     previewLabel.Parent = previewCanvas
     
     self.PreviewCanvas = previewCanvas
     
+    -- Preview Footer
     local previewFooter = Instance.new("Frame")
     previewFooter.Size = UDim2.new(1, -20, 0, 40)
     previewFooter.Position = UDim2.new(0, 10, 1, -50)
     previewFooter.BackgroundColor3 = self.Theme.Secondary
     previewFooter.BorderSizePixel = 0
     previewFooter.Parent = self.PreviewPane
-    CreateRound(previewFooter, 6)
+    UIHelpers.CreateRound(previewFooter, self.Theme.Radius - 2)
     
     local previewModeLabel = Instance.new("TextLabel")
     previewModeLabel.Size = UDim2.new(0, 80, 1, 0)
@@ -487,6 +784,7 @@ function StoppedUI:Create(config)
     previewModeLabel.Font = Enum.Font.Gotham
     previewModeLabel.TextSize = 12
     previewModeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    previewModeLabel.TextYAlignment = Enum.TextYAlignment.Center
     previewModeLabel.Parent = previewFooter
     
     local previewModeBtn = Instance.new("TextButton")
@@ -499,24 +797,515 @@ function StoppedUI:Create(config)
     previewModeBtn.TextSize = 12
     previewModeBtn.BorderSizePixel = 0
     previewModeBtn.Parent = previewFooter
-    CreateRound(previewModeBtn, 6)
+    UIHelpers.CreateRound(previewModeBtn, self.Theme.Radius - 2)
     
     self.PreviewMode = "Players"
-    previewModeBtn.MouseButton1Click:Connect(function()
+    UIHelpers.SafeConnect(previewModeBtn.MouseButton1Click, function()
         self.PreviewMode = (self.PreviewMode == "Players") and "Vehicles" or "Players"
         previewModeBtn.Text = self:Tr(self.PreviewMode)
+    end, self._allConnections)
+end
+
+-- ========================================
+-- SPLITTER (Drag-Resize)
+-- ========================================
+function StoppedUI:CreateSplitter()
+    local splitter = Instance.new("Frame")
+    splitter.Name = "Splitter"
+    splitter.Size = UDim2.new(0, 6, 1, -70)
+    splitter.Position = UDim2.new(self._leftPaneWidth, 10, 0, 70)
+    splitter.BackgroundColor3 = self.Theme.Accent
+    splitter.BackgroundTransparency = 0.92
+    splitter.BorderSizePixel = 0
+    splitter.ZIndex = 10
+    splitter.Parent = self.Content
+    UIHelpers.CreateRound(splitter, 3)
+    
+    -- Glow effect on hover
+    local splitterGlow = Instance.new("Frame")
+    splitterGlow.Name = "Glow"
+    splitterGlow.Size = UDim2.new(1, 4, 1, 0)
+    splitterGlow.Position = UDim2.new(0.5, 0, 0, 0)
+    splitterGlow.AnchorPoint = Vector2.new(0.5, 0)
+    splitterGlow.BackgroundColor3 = self.Theme.Accent
+    splitterGlow.BackgroundTransparency = 1
+    splitterGlow.BorderSizePixel = 0
+    splitterGlow.ZIndex = 9
+    splitterGlow.Parent = splitter
+    UIHelpers.CreateRound(splitterGlow, 4)
+    
+    self.Splitter = splitter
+    
+    -- Hover effects
+    UIHelpers.SafeConnect(splitter.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement then
+            UIHelpers.Tween(splitter, {BackgroundTransparency = 0.7}, 0.2)
+            UIHelpers.Tween(splitterGlow, {BackgroundTransparency = 0.85}, 0.2)
+        end
+    end, self._allConnections)
+    
+    UIHelpers.SafeConnect(splitter.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement then
+            UIHelpers.Tween(splitter, {BackgroundTransparency = 0.92}, 0.2)
+            UIHelpers.Tween(splitterGlow, {BackgroundTransparency = 1}, 0.2)
+        end
+    end, self._allConnections)
+    
+    -- Drag logic
+    local dragging = false
+    local dragConn
+    
+    UIHelpers.SafeConnect(splitter.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            
+            -- Enhanced glow during drag
+            UIHelpers.Tween(splitter, {BackgroundTransparency = 0.5}, 0.15)
+            UIHelpers.Tween(splitterGlow, {BackgroundTransparency = 0.7}, 0.15)
+            
+            dragConn = UIHelpers.SafeConnect(RunService.RenderStepped, function()
+                if not dragging then return end
+                
+                local mouse = game.Players.LocalPlayer:GetMouse()
+                local containerPos = self.Content.AbsolutePosition.X
+                local containerWidth = self.Content.AbsoluteSize.X
+                local relativeX = mouse.X - containerPos
+                
+                -- Calculate fraction
+                local frac = relativeX / containerWidth
+                
+                -- Calculate absolute left pane width
+                local leftWidth = frac * containerWidth
+                
+                -- Clamp to min/max
+                leftWidth = UIHelpers.Clamp(leftWidth, self._minLeftPaneWidth, math.min(self._maxLeftPaneWidth, containerWidth - 100))
+                
+                -- Update fraction
+                self._leftPaneWidth = leftWidth / containerWidth
+                
+                -- Update layouts with smooth transition
+                self:UpdatePaneLayout(true)
+            end, self._allConnections)
+        end
+    end, self._allConnections)
+    
+    UIHelpers.SafeConnect(UserInputService.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and dragging then
+            dragging = false
+            
+            -- Reset glow
+            UIHelpers.Tween(splitter, {BackgroundTransparency = 0.92}, 0.2)
+            UIHelpers.Tween(splitterGlow, {BackgroundTransparency = 1}, 0.2)
+            
+            if dragConn then
+                dragConn:Disconnect()
+                dragConn = nil
+            end
+        end
+    end, self._allConnections)
+end
+
+function StoppedUI:UpdatePaneLayout(animate)
+    if not self.LeftPane or not self.PreviewPane or not self.Splitter then return end
+    
+    local duration = animate and 0.08 or 0
+    
+    -- Update LeftPane
+    UIHelpers.Tween(self.LeftPane, {Size = UDim2.new(self._leftPaneWidth, 0, 1, -70)}, duration)
+    
+    -- Update Splitter
+    UIHelpers.Tween(self.Splitter, {Position = UDim2.new(self._leftPaneWidth, 10, 0, 70)}, duration)
+    
+    -- Update PreviewPane
+    UIHelpers.Tween(self.PreviewPane, {
+        Size = UDim2.new(1 - self._leftPaneWidth, -30, 1, -70),
+        Position = UDim2.new(self._leftPaneWidth, 20, 0, 70)
+    }, duration)
+end
+
+-- ========================================
+-- COMMAND PALETTE (Ctrl+K)
+-- ========================================
+function StoppedUI:CreateCommandPalette()
+    local palette = Instance.new("Frame")
+    palette.Name = "CommandPalette"
+    palette.Size = UDim2.new(0, 500, 0, 400)
+    palette.Position = UDim2.new(0.5, 0, 0.5, 0)
+    palette.AnchorPoint = Vector2.new(0.5, 0.5)
+    palette.BackgroundColor3 = self.Theme.Card
+    palette.BorderSizePixel = 0
+    palette.Visible = false
+    palette.ZIndex = 1000
+    palette.Parent = self.Container
+    UIHelpers.CreateRound(palette, self.Theme.Radius)
+    UIHelpers.CreateStroke(palette, self.Theme.Accent, 2, 0.5)
+    
+    -- Shadow
+    local paletteShadow = Instance.new("ImageLabel")
+    paletteShadow.Size = UDim2.new(1, 30, 1, 30)
+    paletteShadow.Position = UDim2.new(0.5, 0, 0.5, 0)
+    paletteShadow.AnchorPoint = Vector2.new(0.5, 0.5)
+    paletteShadow.BackgroundTransparency = 1
+    paletteShadow.Image = "rbxassetid://5554236805"
+    paletteShadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    paletteShadow.ImageTransparency = 0.3
+    paletteShadow.ZIndex = 999
+    paletteShadow.Parent = palette
+    
+    -- Header
+    local paletteHeader = Instance.new("Frame")
+    paletteHeader.Size = UDim2.new(1, 0, 0, 50)
+    paletteHeader.BackgroundColor3 = self.Theme.Secondary
+    paletteHeader.BorderSizePixel = 0
+    paletteHeader.Parent = palette
+    UIHelpers.CreateRound(paletteHeader, self.Theme.Radius)
+    
+    -- Search Box
+    local searchBox = Instance.new("TextBox")
+    searchBox.Size = UDim2.new(1, -20, 1, -10)
+    searchBox.Position = UDim2.new(0, 10, 0, 5)
+    searchBox.BackgroundTransparency = 1
+    searchBox.PlaceholderText = "🔍 Search commands..."
+    searchBox.PlaceholderColor3 = self.Theme.TextDim
+    searchBox.Text = ""
+    searchBox.TextColor3 = self.Theme.Text
+    searchBox.TextSize = 14
+    searchBox.Font = Enum.Font.Gotham
+    searchBox.TextXAlignment = Enum.TextXAlignment.Left
+    searchBox.ClearTextOnFocus = false
+    searchBox.Parent = paletteHeader
+    
+    -- Results container
+    local resultsScroll = Instance.new("ScrollingFrame")
+    resultsScroll.Size = UDim2.new(1, -20, 1, -70)
+    resultsScroll.Position = UDim2.new(0, 10, 0, 55)
+    resultsScroll.BackgroundTransparency = 1
+    resultsScroll.BorderSizePixel = 0
+    resultsScroll.ScrollBarThickness = 4
+    resultsScroll.ScrollBarImageColor3 = self.Theme.Accent
+    resultsScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    resultsScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    resultsScroll.Parent = palette
+    
+    local resultsList = Instance.new("UIListLayout")
+    resultsList.Padding = UDim.new(0, 4)
+    resultsList.SortOrder = Enum.SortOrder.LayoutOrder
+    resultsList.Parent = resultsScroll
+    
+    self.CommandPalette = {
+        Container = palette,
+        SearchBox = searchBox,
+        ResultsScroll = resultsScroll,
+        Commands = {}
+    }
+    
+    -- Register default commands
+    self:RegisterCommand("Toggle UI", "Hide/Show the main window", function()
+        self:Toggle()
     end)
     
-    -- Footer
+    self:RegisterCommand("Save Config", "Save current configuration", function()
+        self:RequestSave()
+    end)
+    
+    self:RegisterCommand("Load Config", "Load saved configuration", function()
+        self:RequestLoad()
+    end)
+    
+    self:RegisterCommand("Toggle Preview", "Show/Hide preview pane", function()
+        self.ShowPreview = not self.ShowPreview
+        self.PreviewPane.Visible = self.ShowPreview
+    end)
+    
+    self:RegisterCommand("Toggle Dev Mode", "Enable/Disable developer mode", function()
+        self:ToggleDevMode()
+    end)
+    
+    -- Search functionality
+    UIHelpers.SafeConnect(searchBox:GetPropertyChangedSignal("Text"), function()
+        self:FilterCommands(searchBox.Text)
+    end, self._allConnections)
+    
+    -- Keyboard shortcut (Ctrl+K)
+    UIHelpers.SafeConnect(UserInputService.InputBegan, function(input, gameProcessed)
+        if gameProcessed then return end
+        
+        -- Ctrl+K or Cmd+K
+        if (input.KeyCode == Enum.KeyCode.K) and (UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)) then
+            self:ToggleCommandPalette()
+        end
+        
+        -- Escape to close
+        if input.KeyCode == Enum.KeyCode.Escape and palette.Visible then
+            self:ToggleCommandPalette()
+        end
+    end, self._allConnections)
+    
+    -- Focus search box when opened
+    UIHelpers.SafeConnect(palette:GetPropertyChangedSignal("Visible"), function()
+        if palette.Visible then
+            task.wait(0.1)
+            searchBox:CaptureFocus()
+            self:FilterCommands("")
+        end
+    end, self._allConnections)
+end
+
+function StoppedUI:RegisterCommand(name, description, callback)
+    table.insert(self.CommandPalette.Commands, {
+        Name = name,
+        Description = description,
+        Callback = callback
+    })
+end
+
+function StoppedUI:FilterCommands(query)
+    local resultsScroll = self.CommandPalette.ResultsScroll
+    
+    -- Clear existing results
+    for _, child in ipairs(resultsScroll:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+    
+    query = query:lower()
+    
+    -- Add matching commands
+    for _, cmd in ipairs(self.CommandPalette.Commands) do
+        if query == "" or cmd.Name:lower():find(query) or cmd.Description:lower():find(query) then
+            local cmdButton = Instance.new("TextButton")
+            cmdButton.Size = UDim2.new(1, 0, 0, 50)
+            cmdButton.BackgroundColor3 = self.Theme.Background
+            cmdButton.BorderSizePixel = 0
+            cmdButton.Text = ""
+            cmdButton.Parent = resultsScroll
+            UIHelpers.CreateRound(cmdButton, self.Theme.Radius - 2)
+            
+            local cmdName = Instance.new("TextLabel")
+            cmdName.Size = UDim2.new(1, -16, 0, 20)
+            cmdName.Position = UDim2.new(0, 8, 0, 6)
+            cmdName.BackgroundTransparency = 1
+            cmdName.Text = cmd.Name
+            cmdName.TextColor3 = self.Theme.Text
+            cmdName.TextSize = 13
+            cmdName.Font = Enum.Font.GothamBold
+            cmdName.TextXAlignment = Enum.TextXAlignment.Left
+            cmdName.Parent = cmdButton
+            
+            local cmdDesc = Instance.new("TextLabel")
+            cmdDesc.Size = UDim2.new(1, -16, 0, 16)
+            cmdDesc.Position = UDim2.new(0, 8, 0, 28)
+            cmdDesc.BackgroundTransparency = 1
+            cmdDesc.Text = cmd.Description
+            cmdDesc.TextColor3 = self.Theme.TextDim
+            cmdDesc.TextSize = 11
+            cmdDesc.Font = Enum.Font.Gotham
+            cmdDesc.TextXAlignment = Enum.TextXAlignment.Left
+            cmdDesc.Parent = cmdButton
+            
+            UIHelpers.SafeConnect(cmdButton.MouseEnter, function()
+                UIHelpers.Tween(cmdButton, {BackgroundColor3 = self.Theme.Secondary}, 0.15)
+            end, self._allConnections)
+            
+            UIHelpers.SafeConnect(cmdButton.MouseLeave, function()
+                UIHelpers.Tween(cmdButton, {BackgroundColor3 = self.Theme.Background}, 0.15)
+            end, self._allConnections)
+            
+            UIHelpers.SafeConnect(cmdButton.MouseButton1Click, function()
+                self:ToggleCommandPalette()
+                pcall(cmd.Callback)
+            end, self._allConnections)
+        end
+    end
+end
+
+function StoppedUI:ToggleCommandPalette()
+    local palette = self.CommandPalette.Container
+    palette.Visible = not palette.Visible
+    
+    if palette.Visible then
+        palette.Size = UDim2.new(0, 0, 0, 0)
+        palette.BackgroundTransparency = 1
+        UIHelpers.Tween(palette, {Size = UDim2.new(0, 500, 0, 400)}, 0.25)
+        UIHelpers.Tween(palette, {BackgroundTransparency = 0}, 0.2)
+    else
+        UIHelpers.Tween(palette, {Size = UDim2.new(0, 0, 0, 0)}, 0.2)
+        UIHelpers.Tween(palette, {BackgroundTransparency = 1}, 0.2)
+    end
+end
+
+-- ========================================
+-- DEV MODE INSPECTOR
+-- ========================================
+function StoppedUI:CreateDevModeInspector()
+    local inspector = Instance.new("Frame")
+    inspector.Name = "DevModeInspector"
+    inspector.Size = UDim2.new(0, 280, 0, 200)
+    inspector.Position = UDim2.new(1, -290, 0, 10)
+    inspector.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    inspector.BackgroundTransparency = 0.3
+    inspector.BorderSizePixel = 0
+    inspector.ZIndex = 999
+    inspector.Parent = self.Container
+    UIHelpers.CreateRound(inspector, self.Theme.Radius)
+    UIHelpers.CreateStroke(inspector, Color3.fromRGB(255, 100, 100), 2, 0.5)
+    
+    local inspectorTitle = Instance.new("TextLabel")
+    inspectorTitle.Size = UDim2.new(1, 0, 0, 30)
+    inspectorTitle.BackgroundTransparency = 1
+    inspectorTitle.Text = "🔧 Dev Mode"
+    inspectorTitle.TextColor3 = Color3.fromRGB(255, 100, 100)
+    inspectorTitle.TextSize = 14
+    inspectorTitle.Font = Enum.Font.GothamBold
+    inspectorTitle.TextXAlignment = Enum.TextXAlignment.Center
+    inspectorTitle.Parent = inspector
+    
+    local inspectorInfo = Instance.new("TextLabel")
+    inspectorInfo.Size = UDim2.new(1, -20, 1, -40)
+    inspectorInfo.Position = UDim2.new(0, 10, 0, 35)
+    inspectorInfo.BackgroundTransparency = 1
+    inspectorInfo.Text = "Hover over elements to inspect"
+    inspectorInfo.TextColor3 = Color3.fromRGB(220, 220, 220)
+    inspectorInfo.TextSize = 11
+    inspectorInfo.Font = Enum.Font.Code
+    inspectorInfo.TextXAlignment = Enum.TextXAlignment.Left
+    inspectorInfo.TextYAlignment = Enum.TextYAlignment.Top
+    inspectorInfo.TextWrapped = true
+    inspectorInfo.Parent = inspector
+    
+    self.DevModeInspector = {
+        Container = inspector,
+        InfoLabel = inspectorInfo
+    }
+    
+    -- Hover detection for all GUI elements
+    local function setupInspector(gui)
+        for _, descendant in ipairs(gui:GetDescendants()) do
+            if descendant:IsA("GuiObject") then
+                UIHelpers.SafeConnect(descendant.MouseEnter, function()
+                    local info = string.format(
+                        "Name: %s\nClass: %s\nSize: %s\nPosition: %s\nLayoutOrder: %d\nZIndex: %d",
+                        descendant.Name,
+                        descendant.ClassName,
+                        tostring(descendant.Size),
+                        tostring(descendant.Position),
+                        descendant.LayoutOrder,
+                        descendant.ZIndex
+                    )
+                    inspectorInfo.Text = info
+                end, self._allConnections)
+            end
+        end
+    end
+    
+    setupInspector(self.Container)
+end
+
+function StoppedUI:ToggleDevMode()
+    self.DevMode = not self.DevMode
+    
+    if self.DevMode then
+        if not self.DevModeInspector then
+            self:CreateDevModeInspector()
+        else
+            self.DevModeInspector.Container.Visible = true
+        end
+        self:Notify({Text = "Dev Mode Enabled", Type = "Info"})
+    else
+        if self.DevModeInspector then
+            self.DevModeInspector.Container.Visible = false
+        end
+        self:Notify({Text = "Dev Mode Disabled", Type = "Info"})
+    end
+
+    self.PreviewPane = Instance.new("Frame")
+    self.PreviewPane.Name = "PreviewPane"
+    self.PreviewPane.Size = UDim2.new(1, -380, 1, -70)
+    self.PreviewPane.Position = UDim2.new(0, 370, 0, 70)
+    self.PreviewPane.BackgroundColor3 = self.Theme.Card
+    self.PreviewPane.BorderSizePixel = 0
+    self.PreviewPane.Visible = self.ShowPreview
+    self.PreviewPane.Parent = self.Content
+    UIHelpers.CreateRound(self.PreviewPane, self.Theme.Radius)
+    UIHelpers.CreateStroke(self.PreviewPane, self.Theme.Border, 1, 0.85)
+    
+    local previewCanvas = Instance.new("Frame")
+    previewCanvas.Name = "PreviewCanvas"
+    previewCanvas.Size = UDim2.new(1, -20, 1, -60)
+    previewCanvas.Position = UDim2.new(0, 10, 0, 10)
+    previewCanvas.BackgroundTransparency = 1
+    previewCanvas.ClipsDescendants = true
+    previewCanvas.Parent = self.PreviewPane
+    
+    -- Preview Label (CENTERED)
+    local previewLabel = Instance.new("TextLabel")
+    previewLabel.Name = "PreviewLabel"
+    previewLabel.Size = UDim2.new(1, -20, 0, 24)
+    previewLabel.Position = UDim2.new(0.5, 0, 0, 10)
+    previewLabel.AnchorPoint = Vector2.new(0.5, 0)
+    previewLabel.BackgroundTransparency = 1
+    previewLabel.Text = self:Tr("Preview")
+    previewLabel.TextColor3 = self.Theme.TextDim
+    previewLabel.Font = Enum.Font.Gotham
+    previewLabel.TextSize = 12
+    previewLabel.TextXAlignment = Enum.TextXAlignment.Center
+    previewLabel.TextYAlignment = Enum.TextYAlignment.Center
+    previewLabel.TextWrapped = false
+    previewLabel.Parent = previewCanvas
+    
+    self.PreviewCanvas = previewCanvas
+    
+    -- Preview Footer
+    local previewFooter = Instance.new("Frame")
+    previewFooter.Size = UDim2.new(1, -20, 0, 40)
+    previewFooter.Position = UDim2.new(0, 10, 1, -50)
+    previewFooter.BackgroundColor3 = self.Theme.Secondary
+    previewFooter.BorderSizePixel = 0
+    previewFooter.Parent = self.PreviewPane
+    UIHelpers.CreateRound(previewFooter, self.Theme.Radius - 2)
+    
+    local previewModeLabel = Instance.new("TextLabel")
+    previewModeLabel.Size = UDim2.new(0, 80, 1, 0)
+    previewModeLabel.Position = UDim2.new(0, 10, 0, 0)
+    previewModeLabel.BackgroundTransparency = 1
+    previewModeLabel.Text = self:Tr("Mode")
+    previewModeLabel.TextColor3 = self.Theme.TextDim
+    previewModeLabel.Font = Enum.Font.Gotham
+    previewModeLabel.TextSize = 12
+    previewModeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    previewModeLabel.TextYAlignment = Enum.TextYAlignment.Center
+    previewModeLabel.Parent = previewFooter
+    
+    local previewModeBtn = Instance.new("TextButton")
+    previewModeBtn.Size = UDim2.new(0, 100, 0, 28)
+    previewModeBtn.Position = UDim2.new(0, 90, 0, 6)
+    previewModeBtn.BackgroundColor3 = self.Theme.Accent
+    previewModeBtn.Text = self:Tr("Players")
+    previewModeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    previewModeBtn.Font = Enum.Font.GothamBold
+    previewModeBtn.TextSize = 12
+    previewModeBtn.BorderSizePixel = 0
+    previewModeBtn.Parent = previewFooter
+    UIHelpers.CreateRound(previewModeBtn, self.Theme.Radius - 2)
+    
+    self.PreviewMode = "Players"
+    UIHelpers.SafeConnect(previewModeBtn.MouseButton1Click, function()
+        self.PreviewMode = (self.PreviewMode == "Players") and "Vehicles" or "Players"
+        previewModeBtn.Text = self:Tr(self.PreviewMode)
+    end, self._allConnections)
+end
+
+function StoppedUI:CreateFooter()
     local footer = Instance.new("Frame")
     footer.Name = "Footer"
     footer.Size = UDim2.new(1, -20, 0, 38)
     footer.Position = UDim2.new(0, 10, 1, -50)
-    footer.BackgroundColor3 = self.Theme.Secondary
+    footer.BackgroundColor3 = self.Theme.Card
     footer.BorderSizePixel = 0
     footer.Parent = self.Container
-    CreateRound(footer, 8)
-    CreatePadding(footer, 10)
+    UIHelpers.CreateRound(footer, self.Theme.Radius)
+    UIHelpers.CreatePadding(footer, 10)
     
     local usernameLabel = Instance.new("TextLabel")
     usernameLabel.Size = UDim2.new(1, 0, 1, 0)
@@ -526,28 +1315,19 @@ function StoppedUI:Create(config)
     usernameLabel.Font = Enum.Font.Gotham
     usernameLabel.TextSize = 13
     usernameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    usernameLabel.TextYAlignment = Enum.TextYAlignment.Center
     usernameLabel.Parent = footer
-    
-    self.Tabs = {}
-    self.CurrentTab = nil
-    self.Notifications = {}
-    
-    self:CreateConfigTab()
-    self:MakeDraggable()
-    self:SetupResponsiveness()
-    
-    self.Container.Size = UDim2.new(0, 0, 0, 0)
-    Tween(self.Container, {Size = UDim2.new(0, 800, 0, 550)}, 0.5)
-    
-    return self
 end
 
+-- ========================================
+-- NOTIFICATION SYSTEM
+-- ========================================
 function StoppedUI:CreateNotificationBell()
-    -- Create a separate ScreenGui for notifications to remain visible even when the main menu is toggled
     self.NotifyGui = Instance.new("ScreenGui")
-    self.NotifyGui.Name = "StoppedUI_Notify_" .. math.random(1000,9999)
+    self.NotifyGui.Name = "StoppedUI_Notify_" .. math.random(1000, 9999)
     self.NotifyGui.ResetOnSpawn = false
     self.NotifyGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    
     if gethui then
         self.NotifyGui.Parent = gethui()
     elseif syn and syn.protect_gui then
@@ -562,12 +1342,12 @@ function StoppedUI:CreateNotificationBell()
     bellContainer.Size = UDim2.new(0, 60, 0, 60)
     bellContainer.AnchorPoint = Vector2.new(1, 0)
     bellContainer.Position = UDim2.new(1, -15, 0, 15)
-    bellContainer.BackgroundColor3 = self.Theme.Secondary
+    bellContainer.BackgroundColor3 = self.Theme.Card
     bellContainer.BorderSizePixel = 0
     bellContainer.ZIndex = 1000
     bellContainer.Parent = self.NotifyGui
-    CreateRound(bellContainer, 10)
-    CreateStroke(bellContainer, self.Theme.Border, 2)
+    UIHelpers.CreateRound(bellContainer, 10)
+    UIHelpers.CreateStroke(bellContainer, self.Theme.Border, 2, 0.3)
     
     local bell = Instance.new("ImageButton")
     bell.Size = UDim2.new(0, 32, 0, 32)
@@ -575,9 +1355,8 @@ function StoppedUI:CreateNotificationBell()
     bell.AnchorPoint = Vector2.new(0.5, 0.5)
     bell.BackgroundTransparency = 1
     bell.ImageColor3 = self.Theme.TextDim
+    bell.Image = "rbxassetid://" .. self.NotificationBellImgurHash
     bell.Parent = bellContainer
-    
-    self:SetImageFromImgur(bell, self.NotificationBellImgurHash)
     
     local badge = Instance.new("TextLabel")
     badge.Size = UDim2.new(0, 20, 0, 20)
@@ -592,38 +1371,50 @@ function StoppedUI:CreateNotificationBell()
     badge.Visible = false
     badge.ZIndex = 1001
     badge.Parent = bellContainer
-    CreateRound(badge, 10)
+    UIHelpers.CreateRound(badge, 10)
     
     self.NotificationBadge = badge
     self.NotificationBell = bell
     self.NotificationBellContainer = bellContainer
     
-    bell.MouseEnter:Connect(function()
-        Tween(bell, {ImageColor3 = self.Theme.Accent}, 0.2)
-        Tween(bellContainer, {BackgroundColor3 = self.Theme.Background}, 0.2)
-    end)
+    UIHelpers.SafeConnect(bell.MouseEnter, function()
+        UIHelpers.Tween(bell, {ImageColor3 = self.Theme.Accent}, 0.2)
+        UIHelpers.Tween(bellContainer, {BackgroundColor3 = self.Theme.Background}, 0.2)
+    end, self._allConnections)
     
-    bell.MouseLeave:Connect(function()
-        Tween(bell, {ImageColor3 = self.Theme.TextDim}, 0.2)
-        Tween(bellContainer, {BackgroundColor3 = self.Theme.Secondary}, 0.2)
-    end)
+    UIHelpers.SafeConnect(bell.MouseLeave, function()
+        UIHelpers.Tween(bell, {ImageColor3 = self.Theme.TextDim}, 0.2)
+        UIHelpers.Tween(bellContainer, {BackgroundColor3 = self.Theme.Card}, 0.2)
+    end, self._allConnections)
     
+    self:CreateNotificationPanel()
+    
+    UIHelpers.SafeConnect(bell.MouseButton1Click, function()
+        self:ToggleNotificationPanel()
+    end, self._allConnections)
+    
+    self.Notifications = {}
+end
+
+function StoppedUI:CreateNotificationPanel()
     local panel = Instance.new("ScrollingFrame")
     panel.Name = "NotificationPanel"
     panel.Size = UDim2.new(0, 360, 0, 0)
     panel.AnchorPoint = Vector2.new(1, 0)
     panel.Position = UDim2.new(1, -15, 0, 80)
-    panel.BackgroundColor3 = self.Theme.Secondary
+    panel.BackgroundColor3 = self.Theme.Card
     panel.BorderSizePixel = 0
     panel.ScrollBarThickness = 6
     panel.ScrollBarImageColor3 = self.Theme.Accent
     panel.Visible = false
     panel.ZIndex = 1000
     panel.ClipsDescendants = true
+    panel.CanvasSize = UDim2.new(0, 0, 0, 0)
+    panel.AutomaticCanvasSize = Enum.AutomaticSize.Y
     panel.Parent = self.NotifyGui
-    CreateRound(panel, 8)
-    CreateStroke(panel, self.Theme.Border)
-    CreatePadding(panel, 6)
+    UIHelpers.CreateRound(panel, self.Theme.Radius)
+    UIHelpers.CreateStroke(panel, self.Theme.Border, 1, 0.3)
+    UIHelpers.CreatePadding(panel, 6)
     
     local panelList = Instance.new("UIListLayout")
     panelList.Padding = UDim.new(0, 6)
@@ -633,27 +1424,28 @@ function StoppedUI:CreateNotificationBell()
     self.NotificationPanel = panel
     self.NotificationPanelList = panelList
     
-    local posConn = RunService.RenderStepped:Connect(function()
-        if panel and panel.Parent and panel.Visible then
-            local contentHeight = panelList.AbsoluteContentSize.Y + 16
-            local maxHeight = math.min(450, workspace.CurrentCamera.ViewportSize.Y * 0.7)
-            panel.Size = UDim2.new(0, 360, 0, math.min(maxHeight, contentHeight))
-            panel.CanvasSize = UDim2.new(0, 0, 0, contentHeight)
-        end
-    end)
-    self._notificationPanelConn = posConn
-    table.insert(self._allConnections, posConn)
-    
-    bell.MouseButton1Click:Connect(function()
-        panel.Visible = not panel.Visible
+    -- Dynamic sizing
+    UIHelpers.SafeConnect(panelList:GetPropertyChangedSignal("AbsoluteContentSize"), function()
         if panel.Visible then
             local contentHeight = panelList.AbsoluteContentSize.Y + 16
             local maxHeight = math.min(450, workspace.CurrentCamera.ViewportSize.Y * 0.7)
-            Tween(panel, {Size = UDim2.new(0, 360, 0, math.min(maxHeight, contentHeight))}, 0.28)
-        else
-            Tween(panel, {Size = UDim2.new(0, 360, 0, 0)}, 0.22)
+            UIHelpers.Tween(panel, {Size = UDim2.new(0, 360, 0, math.min(maxHeight, contentHeight))}, 0.2)
         end
-    end)
+    end, self._allConnections)
+end
+
+function StoppedUI:ToggleNotificationPanel()
+    local panel = self.NotificationPanel
+    panel.Visible = not panel.Visible
+    
+    if panel.Visible then
+        local contentHeight = self.NotificationPanelList.AbsoluteContentSize.Y + 16
+        local maxHeight = math.min(450, workspace.CurrentCamera.ViewportSize.Y * 0.7)
+        panel.Size = UDim2.new(0, 360, 0, 0)
+        UIHelpers.Tween(panel, {Size = UDim2.new(0, 360, 0, math.min(maxHeight, contentHeight))}, 0.28)
+    else
+        UIHelpers.Tween(panel, {Size = UDim2.new(0, 360, 0, 0)}, 0.22)
+    end
 end
 
 function StoppedUI:Notify(options)
@@ -677,6 +1469,7 @@ function StoppedUI:Notify(options)
         Error = self.Theme.Error
     }
     
+    -- Debounce similar notifications
     local window = 3
     if options.Key and self._recentNotif[options.Key] then
         local recent = self._recentNotif[options.Key]
@@ -693,9 +1486,10 @@ function StoppedUI:Notify(options)
     end
     
     if options.Key then
-        self._recentNotif[options.Key] = { t = tick(), count = 1 }
+        self._recentNotif[options.Key] = {t = tick(), count = 1}
     end
     
+    -- Max notifications
     if #self.Notifications >= self.MaxNotifications then
         local oldest = table.remove(self.Notifications, 1)
         if oldest and oldest.Parent then
@@ -704,6 +1498,7 @@ function StoppedUI:Notify(options)
         end
     end
     
+    -- Create or reuse notification
     local notif = table.remove(self._notificationPool) or Instance.new("Frame")
     notif.Size = UDim2.new(1, -10, 0, 0)
     notif.AutomaticSize = Enum.AutomaticSize.Y
@@ -713,8 +1508,8 @@ function StoppedUI:Notify(options)
     notif.Parent = self.NotificationPanel
     
     if not notif:FindFirstChild("UICorner") then
-        CreateRound(notif, 6)
-        CreatePadding(notif, 10)
+        UIHelpers.CreateRound(notif, self.Theme.Radius - 2)
+        UIHelpers.CreatePadding(notif, 10)
     end
     
     local img = notif:FindFirstChild("NotifImage") or Instance.new("ImageLabel")
@@ -723,10 +1518,9 @@ function StoppedUI:Notify(options)
     img.Position = UDim2.new(0, 0, 0, 0)
     img.BackgroundTransparency = 1
     img.ImageColor3 = colors[type] or self.Theme.Accent
+    img.Image = "rbxassetid://" .. imgHash
     img.Parent = notif
-    CreateRound(img, 6)
-    
-    self:SetImageFromImgur(img, imgHash, "3944680095")
+    UIHelpers.CreateRound(img, self.Theme.Radius - 2)
     
     local textContainer = notif:FindFirstChild("TextContainer") or Instance.new("Frame")
     textContainer.Name = "TextContainer"
@@ -775,15 +1569,16 @@ function StoppedUI:Notify(options)
     progress.BorderSizePixel = 0
     progress.Parent = notif
     
+    -- Fade in animation
     notif.BackgroundTransparency = 1
     label.TextTransparency = 1
     img.ImageTransparency = 1
-    Tween(notif, {BackgroundTransparency = 0}, 0.3)
-    Tween(label, {TextTransparency = 0}, 0.3)
-    Tween(img, {ImageTransparency = 0}, 0.3)
+    UIHelpers.Tween(notif, {BackgroundTransparency = 0}, 0.3)
+    UIHelpers.Tween(label, {TextTransparency = 0}, 0.3)
+    UIHelpers.Tween(img, {ImageTransparency = 0}, 0.3)
     if subText ~= "" then
         subLabel.TextTransparency = 1
-        Tween(subLabel, {TextTransparency = 0}, 0.3)
+        UIHelpers.Tween(subLabel, {TextTransparency = 0}, 0.3)
     end
     
     table.insert(self.Notifications, notif)
@@ -792,20 +1587,22 @@ function StoppedUI:Notify(options)
         self._recentNotif[options.Key].notif = notif
     end
     
+    -- Update badge
     self.NotificationBadge.Text = tostring(#self.Notifications)
     self.NotificationBadge.Visible = true
     
     task.spawn(function()
-        Tween(self.NotificationBadge, {Size = UDim2.new(0, 24, 0, 24)}, 0.2)
+        UIHelpers.Tween(self.NotificationBadge, {Size = UDim2.new(0, 24, 0, 24)}, 0.2)
         task.wait(0.2)
-        Tween(self.NotificationBadge, {Size = UDim2.new(0, 20, 0, 20)}, 0.2)
+        UIHelpers.Tween(self.NotificationBadge, {Size = UDim2.new(0, 20, 0, 20)}, 0.2)
     end)
     
+    -- Progress bar animation
     task.spawn(function()
         local t0 = tick()
         local t1 = t0 + duration
         local conn
-        conn = RunService.RenderStepped:Connect(function()
+        conn = UIHelpers.SafeConnect(RunService.RenderStepped, function()
             if tick() >= t1 or not progress.Parent then
                 progress.Size = UDim2.new(0, 0, 0, 3)
                 if conn then conn:Disconnect() end
@@ -813,17 +1610,18 @@ function StoppedUI:Notify(options)
             end
             local pct = 1 - ((tick() - t0) / duration)
             progress.Size = UDim2.new(pct, 0, 0, 3)
-        end)
+        end, nil)
     end)
     
+    -- Auto remove
     task.delay(duration, function()
         if not notif.Parent then return end
         
-        Tween(notif, {BackgroundTransparency = 1}, 0.3)
-        Tween(label, {TextTransparency = 1}, 0.3)
-        Tween(img, {ImageTransparency = 1}, 0.3)
+        UIHelpers.Tween(notif, {BackgroundTransparency = 1}, 0.3)
+        UIHelpers.Tween(label, {TextTransparency = 1}, 0.3)
+        UIHelpers.Tween(img, {ImageTransparency = 1}, 0.3)
         if subText ~= "" then
-            Tween(subLabel, {TextTransparency = 1}, 0.3)
+            UIHelpers.Tween(subLabel, {TextTransparency = 1}, 0.3)
         end
         task.wait(0.3)
         
@@ -844,114 +1642,21 @@ function StoppedUI:Notify(options)
     end)
 end
 
-function StoppedUI:SetupResponsiveness()
-    local camera = workspace.CurrentCamera
-    
-    local function updateResponsive()
-        local viewportSize = camera.ViewportSize
-        
-        local function computeBadgeSize(viewportY)
-            local base = 60
-            local scale = math.clamp(viewportY / 720, 0.8, 1.5)
-            return math.floor(base * scale)
-        end
-        
-        local bellSize = computeBadgeSize(viewportSize.Y)
-        self.NotificationBellContainer.Size = UDim2.new(0, bellSize, 0, bellSize)
-        
-        if self.NotificationPanel then
-            local maxHeight = math.min(450, viewportSize.Y * 0.7)
-            if self.NotificationPanel.Visible then
-                local contentHeight = self.NotificationPanelList.AbsoluteContentSize.Y + 16
-                self.NotificationPanel.Size = UDim2.new(0, 360, 0, math.min(maxHeight, contentHeight))
-            end
-        end
-        
-        local containerSize = self.Container.AbsoluteSize
-        local containerPos = self.Container.AbsolutePosition
-        
-        if containerPos.X + containerSize.X > viewportSize.X then
-            self.Container.Position = UDim2.new(0, viewportSize.X - containerSize.X - 10, 0, self.Container.Position.Y.Offset)
-        end
-        
-        if containerPos.Y + containerSize.Y > viewportSize.Y then
-            self.Container.Position = UDim2.new(0, self.Container.Position.X.Offset, 0, viewportSize.Y - containerSize.Y - 10)
-        end
-    end
-    
-    local conn = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateResponsive)
-    table.insert(self._allConnections, conn)
+function StoppedUI:StatusNotify(name, status, duration)
+    duration = duration or 3
+    local mapping = {
+        Success = {Type = 'Success', Text = name .. ' ✓'},
+        Error = {Type = 'Error', Text = name .. ' ✖'},
+        Warning = {Type = 'Warning', Text = name .. ' !'},
+        Info = {Type = 'Info', Text = name}
+    }
+    local entry = mapping[status] or mapping.Info
+    self:Notify({Text = entry.Text, Type = entry.Type, Duration = duration})
 end
 
-function StoppedUI:Toggle()
-    if not self.ScreenGui then return end
-    if self.ScreenGui.Enabled then
-        Tween(self.Container, {Size = UDim2.new(0, 0, 0, 0)}, 0.25)
-        task.wait(0.26)
-        self.ScreenGui.Enabled = false
-    else
-        self.ScreenGui.Enabled = true
-        self.Container.Size = UDim2.new(0, 0, 0, 0)
-        Tween(self.Container, {Size = UDim2.new(0, 800, 0, 550)}, 0.4)
-    end
-end
-
-function StoppedUI:MakeDraggable()
-    local dragging = false
-    local dragStartPos = Vector2.new(0, 0)
-    local startWindowPos = Vector2.new(0, 0)
-    local dragConn
-
-    local function stopDrag()
-        dragging = false
-        if dragConn then
-            dragConn:Disconnect()
-            dragConn = nil
-        end
-    end
-
-    local conn1 = self.Topbar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            dragStartPos = input.Position
-            startWindowPos = self.Container.AbsolutePosition
-
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    stopDrag()
-                end
-            end)
-
-            dragConn = RunService.RenderStepped:Connect(function()
-                if not dragging then return end
-                local mousePos = UserInputService:GetMouseLocation()
-                local delta = mousePos - dragStartPos
-                local newPos = startWindowPos + delta
-
-                local viewport = workspace.CurrentCamera.ViewportSize
-                local cs = self.Container.AbsoluteSize
-                newPos = Vector2.new(
-                    math.clamp(newPos.X, 0, math.max(0, viewport.X - cs.X)),
-                    math.clamp(newPos.Y, 0, math.max(0, viewport.Y - cs.Y))
-                )
-
-                self.Container.Position = UDim2.new(0, newPos.X, 0, newPos.Y)
-            end)
-            table.insert(self._allConnections, dragConn)
-        end
-    end)
-    
-    table.insert(self._allConnections, conn1)
-
-    local conn2 = UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            stopDrag()
-        end
-    end)
-    
-    table.insert(self._allConnections, conn2)
-end
-
+-- ========================================
+-- TAB SYSTEM (Enhanced with animated indicator)
+-- ========================================
 function StoppedUI:CreateTab(config)
     config = config or {}
     local tabName = config.Name or "Tab"
@@ -960,9 +1665,11 @@ function StoppedUI:CreateTab(config)
     local tab = {
         Name = tabName,
         Elements = {},
-        Container = nil
+        Container = nil,
+        Icon = nil
     }
     
+    -- Tab Button
     local tabBtn = Instance.new("TextButton")
     tabBtn.Name = tabName
     tabBtn.Size = UDim2.new(0, 120, 1, 0)
@@ -971,7 +1678,19 @@ function StoppedUI:CreateTab(config)
     tabBtn.BorderSizePixel = 0
     tabBtn.AutoButtonColor = false
     tabBtn.Parent = self.TabButtonContainer
-    CreateRound(tabBtn, 8)
+    UIHelpers.CreateRound(tabBtn, self.Theme.Radius)
+    
+    -- Animated accent bar (indicator)
+    local accentBar = Instance.new("Frame")
+    accentBar.Name = "AccentBar"
+    accentBar.Size = UDim2.new(0, 0, 0, 3)
+    accentBar.Position = UDim2.new(0, 0, 1, -3)
+    accentBar.BackgroundColor3 = self.Theme.Accent
+    accentBar.BorderSizePixel = 0
+    accentBar.Parent = tabBtn
+    UIHelpers.CreateRound(accentBar, 2)
+    
+    tab.AccentBar = accentBar
     
     local tabLabel = Instance.new("TextLabel")
     tabLabel.Size = UDim2.new(1, icon and -30 or -10, 1, 0)
@@ -982,6 +1701,7 @@ function StoppedUI:CreateTab(config)
     tabLabel.TextSize = 13
     tabLabel.Font = Enum.Font.GothamBold
     tabLabel.TextXAlignment = Enum.TextXAlignment.Left
+    tabLabel.TextYAlignment = Enum.TextYAlignment.Center
     tabLabel.Parent = tabBtn
     
     if icon then
@@ -991,12 +1711,12 @@ function StoppedUI:CreateTab(config)
         iconImg.AnchorPoint = Vector2.new(0, 0.5)
         iconImg.BackgroundTransparency = 1
         iconImg.ImageColor3 = self.Theme.TextDim
+        iconImg.Image = "rbxassetid://" .. icon
         iconImg.Parent = tabBtn
-        
-        self:SetImageFromImgur(iconImg, icon, "3944680095")
         tab.Icon = iconImg
     end
     
+    -- Tab Content Container
     local content = Instance.new("Frame")
     content.Name = tabName .. "_Content"
     content.Size = UDim2.new(1, -10, 0, 0)
@@ -1014,944 +1734,631 @@ function StoppedUI:CreateTab(config)
     
     tab.Container = content
     
-    tabBtn.MouseEnter:Connect(function()
+    -- Tab hover effects
+    UIHelpers.SafeConnect(tabBtn.MouseEnter, function()
         if self.CurrentTab ~= tab then
-            Tween(tabBtn, {BackgroundColor3 = self.Theme.Secondary}, 0.2)
+            UIHelpers.Tween(tabBtn, {BackgroundColor3 = self.Theme.Secondary}, 0.2)
         end
-    end)
+    end, self._allConnections)
     
-    tabBtn.MouseLeave:Connect(function()
+    UIHelpers.SafeConnect(tabBtn.MouseLeave, function()
         if self.CurrentTab ~= tab then
-            Tween(tabBtn, {BackgroundColor3 = self.Theme.Background}, 0.2)
+            UIHelpers.Tween(tabBtn, {BackgroundColor3 = self.Theme.Background}, 0.2)
         end
-    end)
+    end, self._allConnections)
     
-    tabBtn.MouseButton1Click:Connect(function()
+    -- Tab click handler
+    UIHelpers.SafeConnect(tabBtn.MouseButton1Click, function()
         for _, t in pairs(self.Tabs) do
             t.Container.Visible = false
             local btn = self.TabButtonContainer:FindFirstChild(t.Name)
             if btn then
-                Tween(btn, {BackgroundColor3 = self.Theme.Background}, 0.2)
+                UIHelpers.Tween(btn, {BackgroundColor3 = self.Theme.Background}, 0.2)
                 local lbl = btn:FindFirstChildOfClass("TextLabel")
                 if lbl then
-                    Tween(lbl, {TextColor3 = self.Theme.TextDim}, 0.2)
+                    UIHelpers.Tween(lbl, {TextColor3 = self.Theme.TextDim}, 0.2)
                 end
                 if t.Icon then
-                    Tween(t.Icon, {ImageColor3 = self.Theme.TextDim}, 0.2)
+                    UIHelpers.Tween(t.Icon, {ImageColor3 = self.Theme.TextDim}, 0.2)
+                end
+                -- Hide accent bar
+                if t.AccentBar then
+                    UIHelpers.Tween(t.AccentBar, {Size = UDim2.new(0, 0, 0, 3)}, 0.2)
                 end
             end
         end
         
         content.Visible = true
-        Tween(tabBtn, {BackgroundColor3 = self.Theme.Accent}, 0.2)
-        Tween(tabLabel, {TextColor3 = Color3.fromRGB(255,255,255)}, 0.2)
+        UIHelpers.Tween(tabBtn, {BackgroundColor3 = self.Theme.Accent}, 0.2)
+        UIHelpers.Tween(tabLabel, {TextColor3 = Color3.fromRGB(255, 255, 255)}, 0.2)
         if tab.Icon then
-            Tween(tab.Icon, {ImageColor3 = Color3.fromRGB(255,255,255)}, 0.2)
+            UIHelpers.Tween(tab.Icon, {ImageColor3 = Color3.fromRGB(255, 255, 255)}, 0.2)
         end
+        -- Animate accent bar
+        UIHelpers.Tween(accentBar, {Size = UDim2.new(1, 0, 0, 3)}, 0.3)
+        
         self.CurrentTab = tab
-    end)
+    end, self._allConnections)
     
-    if #self.Tabs == 1 then
+    -- Auto-select first tab
+    if #self.Tabs == 0 then
         tabBtn.BackgroundColor3 = self.Theme.Accent
         tabLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
         if tab.Icon then
             tab.Icon.ImageColor3 = Color3.fromRGB(255, 255, 255)
         end
+        accentBar.Size = UDim2.new(1, 0, 0, 3)
         content.Visible = true
         self.CurrentTab = tab
     end
     
     table.insert(self.Tabs, tab)
-    
-    tab.CreateToggle = function(_, opts) return self:CreateToggle(tab, opts) end
-    tab.CreateSlider = function(_, opts) return self:CreateSlider(tab, opts) end
-    tab.CreateButton = function(_, opts) return self:CreateButton(tab, opts) end
-    tab.CreateKeybind = function(_, opts) return self:CreateKeybind(tab, opts) end
-    tab.CreateDropdown = function(_, opts) return self:CreateDropdown(tab, opts) end
-    tab.CreateLabel = function(_, opts) return self:CreateLabel(tab, opts) end
-    
     return tab
 end
 
-function StoppedUI:CreateConfigTab()
-    local configTab = self:CreateTab({
-        Name = self:Tr("ConfigTab"),
-        Icon = "7733955511"
-    })
+-- ========================================
+-- UI ELEMENTS (Button, Toggle, Slider, etc)
+-- ========================================
+function StoppedUI:AddButton(tab, config)
+    config = config or {}
+    local text = config.Text or "Button"
+    local callback = config.Callback
     
-    -- Language Selector
-    local langDropdown = configTab:CreateDropdown({
-        Name = self:Tr("Language"),
-        Items = {"English", "Português (BR)"},
-        Default = self.Locale == "pt" and "Português (BR)" or "English",
-        Callback = function(value)
-            self.Locale = value == "Português (BR)" and "pt" or "en"
-            self:ApplyTranslations()
-            self:Notify({
-                Key = "ConfigSaved",
-                ImageHash = "7733955511",
-                Duration = 2,
-                Type = "Success"
-            })
+    local btnContainer = Instance.new("Frame")
+    btnContainer.Name = "ButtonContainer"
+    btnContainer.Size = UDim2.new(1, 0, 0, 40)
+    btnContainer.BackgroundColor3 = self.Theme.Card
+    btnContainer.BorderSizePixel = 0
+    btnContainer.LayoutOrder = config.LayoutOrder or (#tab.Elements + 1)
+    btnContainer.Parent = tab.Container
+    UIHelpers.CreateRound(btnContainer, self.Theme.Radius)
+    UIHelpers.CreateStroke(btnContainer, self.Theme.Border, 1, 0.85)
+    
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -16, 1, -8)
+    btn.Position = UDim2.new(0, 8, 0, 4)
+    btn.BackgroundTransparency = 1
+    btn.Text = text
+    btn.TextColor3 = self.Theme.Text
+    btn.TextSize = 13
+    btn.Font = Enum.Font.GothamBold
+    btn.TextXAlignment = Enum.TextXAlignment.Center
+    btn.TextYAlignment = Enum.TextYAlignment.Center
+    btn.Parent = btnContainer
+    
+    UIHelpers.SafeConnect(btn.MouseEnter, function()
+        UIHelpers.Tween(btnContainer, {BackgroundColor3 = self.Theme.Secondary}, 0.2)
+        UIHelpers.Tween(btn, {TextColor3 = self.Theme.Accent}, 0.2)
+    end, self._allConnections)
+    
+    UIHelpers.SafeConnect(btn.MouseLeave, function()
+        UIHelpers.Tween(btnContainer, {BackgroundColor3 = self.Theme.Card}, 0.2)
+        UIHelpers.Tween(btn, {TextColor3 = self.Theme.Text}, 0.2)
+    end, self._allConnections)
+    
+    UIHelpers.SafeConnect(btn.MouseButton1Click, function()
+        UIHelpers.Tween(btnContainer, {Size = UDim2.new(1, -4, 0, 38)}, 0.08)
+        task.wait(0.08)
+        UIHelpers.Tween(btnContainer, {Size = UDim2.new(1, 0, 0, 40)}, 0.08)
+        
+        if callback then
+            pcall(callback)
         end
-    })
+    end, self._allConnections)
     
-    configTab:CreateLabel({ Text = "─────────────────" })
-    
-    -- Preview Toggle
-    local previewToggle = configTab:CreateToggle({
-        Name = self:Tr("ShowPreview"),
-        Default = self.ShowPreview,
-        Callback = function(value)
-            self.ShowPreview = value
-            if self.PreviewPane then
-                self.PreviewPane.Visible = value
-            end
-        end
-    })
-    
-    configTab:CreateLabel({ Text = "─────────────────" })
-    
-    -- Save Config Button
-    configTab:CreateButton({
-        Name = self:Tr("SaveConfig"),
-        Callback = function()
-            local code = self:SaveConfig("default")
-            if code then
-                if setclipboard then
-                    setclipboard(code)
-                    self:Notify({
-                        Key = "ConfigCopied",
-                        ImageHash = "7733955511",
-                        Duration = 3,
-                        Type = "Success"
-                    })
-                else
-                    self:Notify({
-                        Text = "Config code: " .. code:sub(1, 50) .. "...",
-                        ImageHash = "7733955511",
-                        Duration = 5,
-                        Type = "Info"
-                    })
-                end
-            end
-        end
-    })
-    
-    configTab:CreateLabel({ Text = "─────────────────" })
-    
-    -- Load Config via Code
-    configTab:CreateButton({
-        Name = self:Tr("LoadConfig"),
-        Callback = function()
-            if getclipboard then
-                local code = getclipboard()
-                if code and #code > 0 then
-                    local success = self:LoadConfig(code)
-                    if not success then
-                        self:Notify({
-                            Key = "ConfigInvalid",
-                            ImageHash = "7733955511",
-                            Duration = 3,
-                            Type = "Error"
-                        })
-                    end
-                else
-                    self:Notify({
-                        Key = "ClipboardEmpty",
-                        ImageHash = "7733955511",
-                        Duration = 3,
-                        Type = "Warning"
-                    })
-                end
-            else
-                self:Notify({
-                    Key = "ClipboardNotSupported",
-                    ImageHash = "7733955511",
-                    Duration = 3,
-                    Type = "Error"
-                })
-            end
-        end
-    })
-end
-
--- Adaptive Config System (CONSOLIDADO - ÚNICA VERSÃO)
-function StoppedUI:RegisterConfigCallback(identifier, saveFunc, loadFunc)
-    self._configCallbacks[identifier] = {
-        Save = saveFunc,
-        Load = loadFunc
-    }
-end
-
-function StoppedUI:SaveConfig(name)
-    name = name or "default"
-    local config = {
-        Name = name,
-        Version = self.Version,
-        Locale = self.Locale,
-        ShowPreview = self.ShowPreview,
-        Tabs = {},
-        Custom = {}
+    local element = {
+        Type = "Button",
+        Container = btnContainer,
+        Button = btn
     }
     
-    -- Save all tabs and elements
-    for _, tab in pairs(self.Tabs) do
-        local tabConfig = {
-            Name = tab.Name,
-            Elements = {}
-        }
-        
-        for _, element in pairs(tab.Elements) do
-            if element.Value ~= nil or element.Key ~= nil or element.Color ~= nil then
-                table.insert(tabConfig.Elements, {
-                    Name = element.Name,
-                    Value = element.Value,
-                    Key = element.Key,
-                    Color = element.Color
-                })
-            end
-        end
-        
-        table.insert(config.Tabs, tabConfig)
-    end
-    
-    -- Save custom developer data
-    for identifier, callbacks in pairs(self._configCallbacks) do
-        if callbacks.Save then
-            local success, data = pcall(callbacks.Save)
-            if success then
-                config.Custom[identifier] = data
-            else
-                warn("[StoppedUI] Config save error for '" .. identifier .. "':", data)
-            end
-        end
-    end
-    
-    local success, json = pcall(function()
-        return HttpService:JSONEncode(config)
-    end)
-    
-    if success then
-        self._configs[name] = config
-        self:Notify({
-            Key = "ConfigSaved",
-            ImageHash = "7733955511",
-            Duration = 3,
-            Type = "Success"
-        })
-        return json
-    else
-        self:Notify({
-            Text = self:Tr("ErrorOccurred") .. " " .. tostring(json),
-            ImageHash = "7733955511",
-            Duration = 4,
-            Type = "Error"
-        })
-        return nil
-    end
+    table.insert(tab.Elements, element)
+    return element
 end
 
-function StoppedUI:LoadConfig(nameOrJson)
-    nameOrJson = nameOrJson or "default"
-    local config
+function StoppedUI:AddToggle(tab, config)
+    config = config or {}
+    local text = config.Text or "Toggle"
+    local default = config.Default or false
+    local callback = config.Callback
     
-    if self._configs[nameOrJson] then
-        config = self._configs[nameOrJson]
-    else
-        local success, decoded = pcall(function()
-            return HttpService:JSONDecode(nameOrJson)
-        end)
-        
-        if success then
-            config = decoded
-        else
-            self:Notify({
-                Key = "ConfigInvalid",
-                ImageHash = "7733955511",
-                Duration = 4,
-                Type = "Error"
-            })
-            return false
-        end
-    end
-    
-    -- Load locale
-    if config.Locale then
-        self.Locale = config.Locale
-    end
-    
-    -- Load ShowPreview
-    if config.ShowPreview ~= nil then
-        self.ShowPreview = config.ShowPreview
-        if self.PreviewPane then
-            self.PreviewPane.Visible = config.ShowPreview
-        end
-    end
-    
-    -- Load tabs and elements
-    for _, tabConfig in pairs(config.Tabs or {}) do
-        local tab = nil
-        for _, t in pairs(self.Tabs) do
-            if t.Name == tabConfig.Name then
-                tab = t
-                break
-            end
-        end
-        
-        if tab then
-            for _, elementConfig in pairs(tabConfig.Elements or {}) do
-                for _, element in pairs(tab.Elements) do
-                    if element.Name == elementConfig.Name then
-                        if element.Set and elementConfig.Value ~= nil then
-                            element:Set(elementConfig.Value)
-                        elseif element.Set and elementConfig.Key ~= nil then
-                            element:Set(elementConfig.Key)
-                        elseif element.Set and elementConfig.Color ~= nil then
-                            element:Set(elementConfig.Color)
-                        end
-                    end
-                end
-            end
-        end
-    end
-    
-    -- Load custom developer data
-    for identifier, data in pairs(config.Custom or {}) do
-        if self._configCallbacks[identifier] and self._configCallbacks[identifier].Load then
-            local success, err = pcall(self._configCallbacks[identifier].Load, data)
-            if not success then
-                warn("[StoppedUI] Config load error for '" .. identifier .. "':", err)
-            end
-        end
-    end
-    
-    self:Notify({
-        Key = "ConfigLoaded",
-        ImageHash = "7733955511",
-        Duration = 3,
-        Type = "Success"
-    })
-    
-    return true
-end
-
--- Preview Draw Function (MELHORADO)
-function StoppedUI:PreviewDraw(lines)
-    local canvas = self.PreviewCanvas
-    
-    for _, child in pairs(canvas:GetChildren()) do
-        if child.Name ~= "PreviewLabel" and not child:IsA("UIListLayout") then
-            child:Destroy()
-        end
-    end
-    
-    for i, line in ipairs(lines or {}) do
-        if line.type == "line" then
-            local bar = Instance.new("Frame")
-            bar.Size = UDim2.new(0, line.width or 2, 0, line.height or 120)
-            bar.Position = UDim2.new(0, line.x or 10, 0, line.y or 40)
-            bar.BackgroundColor3 = line.color or self.Theme.Success
-            bar.BorderSizePixel = 0
-            bar.Parent = canvas
-            
-        elseif line.type == "text" then
-            local label = Instance.new("TextLabel")
-            label.Size = UDim2.new(0, line.width or 100, 0, line.height or 20)
-            label.Position = UDim2.new(0, line.x or 10, 0, line.y or 10)
-            label.BackgroundTransparency = 1
-            label.Text = line.text or ""
-            label.TextColor3 = line.color or self.Theme.Success
-            label.Font = Enum.Font.Gotham
-            label.TextSize = line.textSize or 12
-            label.TextXAlignment = Enum.TextXAlignment.Left
-            label.Parent = canvas
-            
-        elseif line.type == "box" then
-            local box = Instance.new("Frame")
-            box.Size = UDim2.new(0, line.width or 100, 0, line.height or 100)
-            box.Position = UDim2.new(0, line.x or 10, 0, line.y or 40)
-            box.BackgroundTransparency = 1
-            box.BorderSizePixel = 0
-            box.Parent = canvas
-            CreateStroke(box, line.color or self.Theme.Success, line.thickness or 2)
-        end
-    end
-end
-
--- Toggle Element
-function StoppedUI:CreateToggle(tab, options)
-    options = options or {}
-    local name = options.Name or "Toggle"
-    local default = options.Default or false
-    local callback = options.Callback or function() end
-    
-    local toggle = {
-        Name = name,
-        Value = default
-    }
-    
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, -10, 0, 45)
-    container.BackgroundColor3 = self.Theme.Secondary
-    container.BorderSizePixel = 0
-    container.Parent = tab.Container
-    CreateRound(container, 8)
-    CreatePadding(container, 10)
+    local toggleContainer = Instance.new("Frame")
+    toggleContainer.Name = "ToggleContainer"
+    toggleContainer.Size = UDim2.new(1, 0, 0, 40)
+    toggleContainer.BackgroundColor3 = self.Theme.Card
+    toggleContainer.BorderSizePixel = 0
+    toggleContainer.LayoutOrder = config.LayoutOrder or (#tab.Elements + 1)
+    toggleContainer.Parent = tab.Container
+    UIHelpers.CreateRound(toggleContainer, self.Theme.Radius)
+    UIHelpers.CreateStroke(toggleContainer, self.Theme.Border, 1, 0.85)
+    UIHelpers.CreatePadding(toggleContainer, 10)
     
     local label = Instance.new("TextLabel")
     label.Size = UDim2.new(1, -60, 1, 0)
     label.BackgroundTransparency = 1
-    label.Text = name
-    if options.TranslationKey then table.insert(self._translatedElements, {Instance = label, Key = options.TranslationKey}) end
-    label.TextColor3 = self.Theme.Text
-    label.TextSize = 14
-    label.Font = Enum.Font.Gotham
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = container
-    
-    local switch = Instance.new("Frame")
-    switch.Size = UDim2.new(0, 40, 0, 22)
-    switch.Position = UDim2.new(1, -50, 0.5, 0)
-    switch.AnchorPoint = Vector2.new(0, 0.5)
-    switch.BackgroundColor3 = default and self.Theme.Accent or self.Theme.Border
-    switch.BorderSizePixel = 0
-    switch.Parent = container
-    CreateRound(switch, 11)
-    
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 18, 0, 18)
-    knob.Position = default and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
-    knob.AnchorPoint = Vector2.new(0, 0.5)
-    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    knob.BorderSizePixel = 0
-    knob.Parent = switch
-    CreateRound(knob, 9)
-    
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 1, 0)
-    btn.BackgroundTransparency = 1
-    btn.Text = ""
-    btn.Parent = container
-    
-    btn.MouseButton1Click:Connect(function()
-        toggle.Value = not toggle.Value
-        
-        Tween(switch, {BackgroundColor3 = toggle.Value and self.Theme.Accent or self.Theme.Border})
-        Tween(knob, {Position = toggle.Value and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)})
-        
-        local success, err = pcall(callback, toggle.Value)
-        if success then
-            -- show a short notify stating the toggle changed
-            self:Notify({
-                Text = name .. (toggle.Value and " enabled" or " disabled"),
-                Type = toggle.Value and "Success" or "Info",
-                Duration = 2
-            })
-        else
-            self:Notify({
-                Text = self:Tr("ErrorOccurred") .. " " .. name .. "\n" .. tostring(err),
-                Type = "Error",
-                Duration = 4
-            })
-        end
-    end)
-    
-    function toggle:Set(value)
-        toggle.Value = value
-        Tween(switch, {BackgroundColor3 = value and self.Theme.Accent or self.Theme.Border})
-        Tween(knob, {Position = value and UDim2.new(1, -20, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)})
-        pcall(callback, value)
-    end
-    
-    table.insert(tab.Elements, toggle)
-    return toggle
-end
-
--- Slider Element
-function StoppedUI:CreateSlider(tab, options)
-    options = options or {}
-    local name = options.Name or "Slider"
-    local min = options.Min or 0
-    local max = options.Max or 100
-    local default = options.Default or min
-    local callback = options.Callback or function() end
-    
-    local slider = {
-        Name = name,
-        Value = default
-    }
-    
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, -10, 0, 60)
-    container.BackgroundColor3 = self.Theme.Secondary
-    container.BorderSizePixel = 0
-    container.Parent = tab.Container
-    CreateRound(container, 8)
-    CreatePadding(container, 10)
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -60, 0, 20)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    label.TextColor3 = self.Theme.Text
-    label.TextSize = 14
-    label.Font = Enum.Font.Gotham
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = container
-    
-    local valueLabel = Instance.new("TextLabel")
-    valueLabel.Size = UDim2.new(0, 50, 0, 20)
-    valueLabel.Position = UDim2.new(1, -60, 0, 0)
-    valueLabel.BackgroundTransparency = 1
-    valueLabel.Text = tostring(default)
-    valueLabel.TextColor3 = self.Theme.Accent
-    valueLabel.TextSize = 14
-    valueLabel.Font = Enum.Font.GothamBold
-    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
-    valueLabel.Parent = container
-    
-    local track = Instance.new("Frame")
-    track.Size = UDim2.new(1, -20, 0, 6)
-    track.Position = UDim2.new(0, 10, 1, -16)
-    track.BackgroundColor3 = self.Theme.Background
-    track.BorderSizePixel = 0
-    track.Parent = container
-    CreateRound(track, 3)
-    
-    local fill = Instance.new("Frame")
-    fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
-    fill.BackgroundColor3 = self.Theme.Accent
-    fill.BorderSizePixel = 0
-    fill.Parent = track
-    CreateRound(fill, 3)
-    
-    local dragging = false
-    local lastUpdate = tick()
-    local debounceDelay = 0.05
-    
-    track.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-        end
-    end)
-    
-    local conn = UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-    table.insert(self._allConnections, conn)
-    
-    local conn2 = UserInputService.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            if tick() - lastUpdate < debounceDelay then return end
-            lastUpdate = tick()
-            
-            local pos = Clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-            local value = math.floor(min + (max - min) * pos)
-            
-            slider.Value = value
-            valueLabel.Text = tostring(value)
-            fill.Size = UDim2.new(pos, 0, 1, 0)
-            
-            pcall(callback, value)
-        end
-    end)
-    table.insert(self._allConnections, conn2)
-    
-    function slider:Set(value)
-        slider.Value = Clamp(value, min, max)
-        valueLabel.Text = tostring(slider.Value)
-        local pos = (slider.Value - min) / (max - min)
-        fill.Size = UDim2.new(pos, 0, 1, 0)
-        pcall(callback, slider.Value)
-    end
-    
-    table.insert(tab.Elements, slider)
-    return slider
-end
-
--- Button Element
-function StoppedUI:CreateButton(tab, options)
-    options = options or {}
-    local name = options.Name or "Button"
-    local callback = options.Callback or function() end
-    
-    local container = Instance.new("TextButton")
-    container.Size = UDim2.new(1, -10, 0, 45)
-    container.BackgroundColor3 = self.Theme.Accent
-    container.BorderSizePixel = 0
-    container.Text = name
-    if options.TranslationKey then table.insert(self._translatedElements, {Instance = container, Key = options.TranslationKey}) end
-    container.TextXAlignment = Enum.TextXAlignment.Center
-    container.TextYAlignment = Enum.TextYAlignment.Center
-    container.TextColor3 = Color3.fromRGB(255, 255, 255)
-    container.TextSize = 14
-    container.Font = Enum.Font.GothamBold
-    container.AutoButtonColor = false
-    container.Parent = tab.Container
-    CreateRound(container, 8)
-    
-    container.MouseEnter:Connect(function()
-        Tween(container, {BackgroundColor3 = Color3.fromRGB(
-            math.min(self.Theme.Accent.R * 255 * 1.2, 255) / 255,
-            math.min(self.Theme.Accent.G * 255 * 1.2, 255) / 255,
-            math.min(self.Theme.Accent.B * 255 * 1.2, 255) / 255
-        )}, 0.2)
-    end)
-    
-    container.MouseLeave:Connect(function()
-        Tween(container, {BackgroundColor3 = self.Theme.Accent}, 0.2)
-    end)
-    
-    container.MouseButton1Click:Connect(function()
-        Tween(container, {Size = UDim2.new(1, -12, 0, 43)}, 0.1)
-        task.wait(0.1)
-        Tween(container, {Size = UDim2.new(1, -10, 0, 45)}, 0.1)
-        
-        pcall(callback)
-    end)
-    
-    return container
-end
-
--- Keybind Element (COM DETECÇÃO DE CONFLITO)
-function StoppedUI:CreateKeybind(tab, options)
-    options = options or {}
-    local name = options.Name or "Keybind"
-    local default = options.Default or Enum.KeyCode.E
-    local callback = options.Callback or function() end
-    
-    local keybind = {
-        Name = name,
-        Key = default,
-        Listening = false
-    }
-    
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, -10, 0, 45)
-    container.BackgroundColor3 = self.Theme.Secondary
-    container.BorderSizePixel = 0
-    container.Parent = tab.Container
-    CreateRound(container, 8)
-    CreatePadding(container, 10)
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -110, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    if options.TranslationKey then table.insert(self._translatedElements, {Instance = label, Key = options.TranslationKey}) end
-    label.TextColor3 = self.Theme.Text
-    label.TextSize = 14
-    label.Font = Enum.Font.Gotham
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = container
-    
-    local keyBox = Instance.new("TextButton")
-    keyBox.Size = UDim2.new(0, 90, 0, 30)
-    keyBox.Position = UDim2.new(1, -100, 0.5, 0)
-    keyBox.AnchorPoint = Vector2.new(0, 0.5)
-    keyBox.BackgroundColor3 = self.Theme.Background
-    keyBox.Text = string.upper(tostring(default.Name))
-    keyBox.TextColor3 = self.Theme.Accent
-    keyBox.TextSize = 12
-    keyBox.Font = Enum.Font.GothamBold
-    keyBox.BorderSizePixel = 0
-    keyBox.AutoButtonColor = false
-    keyBox.Parent = container
-    CreateRound(keyBox, 6)
-    CreateStroke(keyBox, self.Theme.Border)
-    
-    keyBox.MouseEnter:Connect(function()
-        if not keybind.Listening then
-            Tween(keyBox, {BackgroundColor3 = self.Theme.Secondary}, 0.2)
-        end
-    end)
-    
-    keyBox.MouseLeave:Connect(function()
-        if not keybind.Listening then
-            Tween(keyBox, {BackgroundColor3 = self.Theme.Background}, 0.2)
-        end
-    end)
-    
-    keyBox.MouseButton1Click:Connect(function()
-        keybind.Listening = true
-        keyBox.Text = "..."
-        Tween(keyBox, {TextColor3 = self.Theme.Warning}, 0.2)
-        Tween(keyBox, {BackgroundColor3 = self.Theme.Warning:Lerp(self.Theme.Background, 0.8)}, 0.2)
-    end)
-    
-    local conn = UserInputService.InputBegan:Connect(function(input, gpe)
-        if keybind.Listening and input.UserInputType == Enum.UserInputType.Keyboard then
-            local newKeyName = string.upper(tostring(input.KeyCode.Name))
-            
-            -- Verificar conflitos (NOVO)
-            local conflictName = nil
-            for bindName, bind in pairs(self._keybinds) do
-                if bind.Key == input.KeyCode and bindName ~= name then
-                    conflictName = bindName
-                    break
-                end
-            end
-            
-            if conflictName then
-                self:Notify({
-                    Text = self:Tr("KeyConflict") .. " " .. conflictName,
-                    Type = "Warning",
-                    Duration = 4
-                })
-            end
-            
-            keybind.Key = input.KeyCode
-            keyBox.Text = newKeyName
-            self._keybinds[name] = keybind
-            
-            Tween(keyBox, {TextColor3 = self.Theme.Accent}, 0.2)
-            Tween(keyBox, {BackgroundColor3 = self.Theme.Background}, 0.2)
-            keybind.Listening = false
-            
-        elseif not gpe and not keybind.Listening and input.KeyCode == keybind.Key then
-            pcall(callback, keybind.Key)
-        end
-    end)
-    table.insert(self._allConnections, conn)
-    
-    function keybind:Set(key)
-        keybind.Key = key
-        keyBox.Text = string.upper(tostring(key.Name))
-        self._keybinds[name] = keybind
-    end
-    
-    self._keybinds[name] = keybind
-    table.insert(tab.Elements, keybind)
-    return keybind
-end
-
--- Dropdown Element (CORRIGIDO)
-function StoppedUI:CreateDropdown(tab, options)
-    options = options or {}
-    local name = options.Name or "Dropdown"
-    local items = options.Items or {"Option 1", "Option 2", "Option 3"}
-    local default = options.Default or items[1]
-    local callback = options.Callback or function() end
-    
-    local dropdown = {
-        Name = name,
-        Value = default,
-        Items = items
-    }
-    
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, -10, 0, 45)
-    container.BackgroundColor3 = self.Theme.Secondary
-    container.BorderSizePixel = 0
-    container.Parent = tab.Container
-    CreateRound(container, 8)
-    CreatePadding(container, 10)
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -120, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    if options.TranslationKey then table.insert(self._translatedElements, {Instance = label, Key = options.TranslationKey}) end
-    label.TextColor3 = self.Theme.Text
-    label.TextSize = 14
-    label.Font = Enum.Font.GothamBold
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = container
-    
-    local button = Instance.new("TextButton")
-    button.Size = UDim2.new(0, 110, 0, 30)
-    button.Position = UDim2.new(1, -120, 0.5, 0)
-    button.AnchorPoint = Vector2.new(0, 0.5)
-    button.BackgroundColor3 = self.Theme.Background
-    button.Text = default .. " ▼"
-    button.TextColor3 = self.Theme.Accent
-    button.TextSize = 12
-    button.Font = Enum.Font.GothamBold
-    button.BorderSizePixel = 0
-    button.AutoButtonColor = false
-    button.Parent = container
-    CreateRound(button, 6)
-    CreateStroke(button, self.Theme.Border)
-    
-    -- listFrame é filho de ScreenGui, não container (CORRIGIDO)
-    local listFrame = Instance.new("Frame")
-    listFrame.Size = UDim2.new(0, 110, 0, #items * 35)
-    listFrame.BackgroundColor3 = self.Theme.Secondary
-    listFrame.BorderSizePixel = 0
-    listFrame.Visible = false
-    listFrame.ZIndex = 1005
-    listFrame.ClipsDescendants = true
-    listFrame.Parent = self.ScreenGui
-    CreateRound(listFrame, 6)
-    CreateStroke(listFrame, self.Theme.Border)
-    
-    local listLayout = Instance.new("UIListLayout")
-    listLayout.Padding = UDim.new(0, 2)
-    listLayout.Parent = listFrame
-    
-    -- atualizar posição via RenderStepped (CORRIGIDO)
-    local function updateListPosition()
-        local absPos = button.AbsolutePosition
-        local absSize = button.AbsoluteSize
-        local x = absPos.X
-        local y = absPos.Y + absSize.Y + 4
-        listFrame.Position = UDim2.new(0, x, 0, y)
-    end
-    
-    local posConn
-    local function startTracking()
-        if posConn then posConn:Disconnect() end
-        posConn = RunService.RenderStepped:Connect(function()
-            if listFrame.Visible then
-                updateListPosition()
-            end
-        end)
-        table.insert(self._dropdownRenderConnections, posConn)
-        table.insert(self._allConnections, posConn)
-    end
-    
-    for _, item in ipairs(items) do
-        local itemBtn = Instance.new("TextButton")
-        itemBtn.Size = UDim2.new(1, -4, 0, 33)
-        itemBtn.BackgroundColor3 = self.Theme.Background
-        itemBtn.Text = item
-        itemBtn.TextColor3 = self.Theme.Text
-        itemBtn.TextSize = 12
-        itemBtn.Font = Enum.Font.Gotham
-        itemBtn.BorderSizePixel = 0
-        itemBtn.AutoButtonColor = false
-        itemBtn.Parent = listFrame
-        CreateRound(itemBtn, 4)
-        
-        itemBtn.MouseEnter:Connect(function()
-            Tween(itemBtn, {BackgroundColor3 = self.Theme.Accent}, 0.15)
-        end)
-        
-        itemBtn.MouseLeave:Connect(function()
-            Tween(itemBtn, {BackgroundColor3 = self.Theme.Background}, 0.15)
-        end)
-        
-        itemBtn.MouseButton1Click:Connect(function()
-            dropdown.Value = item
-            button.Text = item .. " ▼"
-            listFrame.Visible = false
-            pcall(callback, item)
-        end)
-    end
-    
-    button.MouseButton1Click:Connect(function()
-        listFrame.Visible = not listFrame.Visible
-        if listFrame.Visible then
-            startTracking()
-            updateListPosition()
-        end
-    end)
-    
-    -- fechar ao clicar fora (CORRIGIDO)
-    local clickConn = UserInputService.InputBegan:Connect(function(input, gpe)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 and listFrame.Visible then
-            local mouse = UserInputService:GetMouseLocation()
-            local inList = (mouse.X >= listFrame.AbsolutePosition.X and 
-                           mouse.X <= listFrame.AbsolutePosition.X + listFrame.AbsoluteSize.X and
-                           mouse.Y >= listFrame.AbsolutePosition.Y and 
-                           mouse.Y <= listFrame.AbsolutePosition.Y + listFrame.AbsoluteSize.Y)
-            
-            local inBtn = (mouse.X >= button.AbsolutePosition.X and 
-                          mouse.X <= button.AbsolutePosition.X + button.AbsoluteSize.X and
-                          mouse.Y >= button.AbsolutePosition.Y and 
-                          mouse.Y <= button.AbsolutePosition.Y + button.AbsoluteSize.Y)
-            
-            if not inList and not inBtn then
-                listFrame.Visible = false
-            end
-        end
-    end)
-    table.insert(self._allConnections, clickConn)
-    
-    function dropdown:Set(value)
-        dropdown.Value = value
-        button.Text = value .. " ▼"
-        pcall(callback, value)
-    end
-    
-    table.insert(tab.Elements, dropdown)
-    return dropdown
-end
-
--- Label Element
-function StoppedUI:CreateLabel(tab, options)
-    options = options or {}
-    local text = options.Text or "Label"
-    
-    local container = Instance.new("Frame")
-    container.Size = UDim2.new(1, -10, 0, 30)
-    container.BackgroundTransparency = 1
-    container.BorderSizePixel = 0
-    container.Parent = tab.Container
-    
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 1, 0)
-    label.BackgroundTransparency = 1
     label.Text = text
-    if options.TranslationKey then table.insert(self._translatedElements, {Instance = label, Key = options.TranslationKey}) end
-    label.TextColor3 = self.Theme.TextDim
+    label.TextColor3 = self.Theme.Text
     label.TextSize = 13
     label.Font = Enum.Font.Gotham
     label.TextXAlignment = Enum.TextXAlignment.Left
-    label.TextWrapped = true
-    label.Parent = container
+    label.TextYAlignment = Enum.TextYAlignment.Center
+    label.Parent = toggleContainer
     
-    return container
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(0, 46, 0, 24)
+    toggleBtn.Position = UDim2.new(1, -46, 0.5, 0)
+    toggleBtn.AnchorPoint = Vector2.new(0, 0.5)
+    toggleBtn.BackgroundColor3 = default and self.Theme.Accent or self.Theme.Secondary
+    toggleBtn.Text = ""
+    toggleBtn.BorderSizePixel = 0
+    toggleBtn.Parent = toggleContainer
+    UIHelpers.CreateRound(toggleBtn, 12)
+    
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 18, 0, 18)
+    knob.Position = default and UDim2.new(1, -21, 0.5, 0) or UDim2.new(0, 3, 0.5, 0)
+    knob.AnchorPoint = Vector2.new(0, 0.5)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.BorderSizePixel = 0
+    knob.Parent = toggleBtn
+    UIHelpers.CreateRound(knob, 9)
+    
+    local state = default
+    
+    UIHelpers.SafeConnect(toggleBtn.MouseButton1Click, function()
+        state = not state
+        
+        UIHelpers.Tween(toggleBtn, {BackgroundColor3 = state and self.Theme.Accent or self.Theme.Secondary}, 0.2)
+        UIHelpers.Tween(knob, {Position = state and UDim2.new(1, -21, 0.5, 0) or UDim2.new(0, 3, 0.5, 0)}, 0.2)
+        
+        if callback then
+            pcall(callback, state)
+        end
+    end, self._allConnections)
+    
+    local element = {
+        Type = "Toggle",
+        Container = toggleContainer,
+        State = state,
+        SetValue = function(self, value)
+            state = value
+            UIHelpers.Tween(toggleBtn, {BackgroundColor3 = state and self.Theme.Accent or self.Theme.Secondary}, 0.2)
+            UIHelpers.Tween(knob, {Position = state and UDim2.new(1, -21, 0.5, 0) or UDim2.new(0, 3, 0.5, 0)}, 0.2)
+        end,
+        GetValue = function()
+            return state
+        end
+    }
+    
+    table.insert(tab.Elements, element)
+    return element
 end
 
--- Cleanup and resource management (NOVO)
-function StoppedUI:Destroy()
-    -- Disconnect notification panel connection
-    if self._notificationPanelConn then
-        pcall(function() self._notificationPanelConn:Disconnect() end)
-        self._notificationPanelConn = nil
+function StoppedUI:AddSlider(tab, config)
+    config = config or {}
+    config.Accent = self.Theme.Accent
+    config.BackgroundColor = self.Theme.Secondary
+    config.TextColor = self.Theme.Text
+    config.Size = UDim2.new(1, 0, 0, 46)
+    config.LayoutOrder = config.LayoutOrder or (#tab.Elements + 1)
+    
+    local slider = SliderComponent.new(tab.Container, config, self._allConnections)
+    
+    local element = {
+        Type = "Slider",
+        Slider = slider,
+        Container = slider.Container,
+        SetValue = function(self, v) slider:SetValue(v) end,
+        GetValue = function() return slider:GetValue() end,
+        Destroy = function() slider:Destroy() end
+    }
+    
+    table.insert(tab.Elements, element)
+    table.insert(self._sliders, slider)
+    return element
+end
+
+function StoppedUI:AddLabel(tab, config)
+    config = config or {}
+    local text = config.Text or "Label"
+    local centered = config.Centered or false
+    
+    local labelContainer = Instance.new("Frame")
+    labelContainer.Name = "LabelContainer"
+    labelContainer.Size = UDim2.new(1, 0, 0, 0)
+    labelContainer.AutomaticSize = Enum.AutomaticSize.Y
+    labelContainer.BackgroundTransparency = 1
+    labelContainer.LayoutOrder = config.LayoutOrder or (#tab.Elements + 1)
+    labelContainer.Parent = tab.Container
+    UIHelpers.CreatePadding(labelContainer, 5)
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -10, 0, 0)
+    label.AutomaticSize = Enum.AutomaticSize.Y
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = self.Theme.TextDim
+    label.TextSize = 12
+    label.Font = Enum.Font.Gotham
+    label.TextWrapped = true
+    label.TextXAlignment = centered and Enum.TextXAlignment.Center or Enum.TextXAlignment.Left
+    label.TextYAlignment = Enum.TextYAlignment.Top
+    label.Parent = labelContainer
+    
+    if centered then
+        label.Position = UDim2.new(0.5, 0, 0, 0)
+        label.AnchorPoint = Vector2.new(0.5, 0)
     end
     
-    -- Disconnect all dropdown render connections
-    if self._dropdownRenderConnections and #self._dropdownRenderConnections > 0 then
-        for _, conn in ipairs(self._dropdownRenderConnections) do
-            pcall(function() conn:Disconnect() end)
+    local element = {
+        Type = "Label",
+        Container = labelContainer,
+        Label = label,
+        SetText = function(self, newText)
+            label.Text = newText
         end
-        self._dropdownRenderConnections = {}
-    end
+    }
     
-    -- Disconnect all tracked connections
-    if self._allConnections and #self._allConnections > 0 then
-        for _, conn in ipairs(self._allConnections) do
-            pcall(function() conn:Disconnect() end)
+    table.insert(tab.Elements, element)
+    return element
+end
+
+function StoppedUI:AddSection(tab, config)
+    config = config or {}
+    local text = config.Text or "Section"
+    
+    local sectionContainer = Instance.new("Frame")
+    sectionContainer.Name = "SectionContainer"
+    sectionContainer.Size = UDim2.new(1, 0, 0, 30)
+    sectionContainer.BackgroundTransparency = 1
+    sectionContainer.LayoutOrder = config.LayoutOrder or (#tab.Elements + 1)
+    sectionContainer.Parent = tab.Container
+    
+    local line1 = Instance.new("Frame")
+    line1.Size = UDim2.new(0.45, -5, 0, 1)
+    line1.Position = UDim2.new(0, 0, 0.5, 0)
+    line1.AnchorPoint = Vector2.new(0, 0.5)
+    line1.BackgroundColor3 = self.Theme.Border
+    line1.BorderSizePixel = 0
+    line1.Parent = sectionContainer
+    
+    local sectionLabel = Instance.new("TextLabel")
+    sectionLabel.Size = UDim2.new(0.1, 0, 1, 0)
+    sectionLabel.Position = UDim2.new(0.5, 0, 0, 0)
+    sectionLabel.AnchorPoint = Vector2.new(0.5, 0)
+    sectionLabel.BackgroundTransparency = 1
+    sectionLabel.Text = text
+    sectionLabel.TextColor3 = self.Theme.TextDim
+    sectionLabel.TextSize = 12
+    sectionLabel.Font = Enum.Font.GothamBold
+    sectionLabel.TextXAlignment = Enum.TextXAlignment.Center
+    sectionLabel.TextYAlignment = Enum.TextYAlignment.Center
+    sectionLabel.Parent = sectionContainer
+    
+    local line2 = Instance.new("Frame")
+    line2.Size = UDim2.new(0.45, -5, 0, 1)
+    line2.Position = UDim2.new(1, 0, 0.5, 0)
+    line2.AnchorPoint = Vector2.new(1, 0.5)
+    line2.BackgroundColor3 = self.Theme.Border
+    line2.BorderSizePixel = 0
+    line2.Parent = sectionContainer
+    
+    local element = {
+        Type = "Section",
+        Container = sectionContainer
+    }
+    
+    table.insert(tab.Elements, element)
+    return element
+end
+
+-- ========================================
+-- CONFIG SYSTEM (Hook-based)
+-- ========================================
+function StoppedUI:GetConfigState()
+    local state = {
+        Elements = {}
+    }
+    
+    for _, tab in ipairs(self.Tabs) do
+        for _, element in ipairs(tab.Elements) do
+            if element.Type == "Toggle" then
+                state.Elements[element.Container.Name] = element:GetValue()
+            elseif element.Type == "Slider" then
+                state.Elements[element.Container.Name] = element:GetValue()
+            end
         end
-        self._allConnections = {}
     end
     
-    -- Destroy the ScreenGui and all children
-    if self.ScreenGui and self.ScreenGui.Parent then
-        pcall(function() self.ScreenGui:Destroy() end)
+    return state
+end
+
+function StoppedUI:SetConfigState(state)
+    if not state or not state.Elements then return false end
+    
+    for _, tab in ipairs(self.Tabs) do
+        for _, element in ipairs(tab.Elements) do
+            local savedValue = state.Elements[element.Container.Name]
+            if savedValue ~= nil then
+                if element.Type == "Toggle" or element.Type == "Slider" then
+                    element:SetValue(savedValue)
+                end
+            end
+        end
+    end
+    
+    return true
+end
+
+function StoppedUI:RequestSave()
+    if self.Config.Enabled then
+        self.Config.OnRequestSave:Fire()
+    end
+end
+
+function StoppedUI:RequestLoad()
+    if self.Config.Enabled then
+        self.Config.OnRequestLoad:Fire()
+    end
+end
+
+-- ========================================
+-- TRANSLATION SYSTEM (Hook-based, disabled by default)
+-- ========================================
+function StoppedUI:Tr(key)
+    if not self.TranslationEnabled then
+        return key
+    end
+    
+    local locale = self.Locale or "en"
+    if self.Translations[locale] and self.Translations[locale][key] then
+        return self.Translations[locale][key]
+    end
+    return key
+end
+
+function StoppedUI:ApplyTranslations()
+    if not self.TranslationEnabled then
+        return
+    end
+    
+    for _, entry in pairs(self._translatedElements or {}) do
+        local inst = entry.Instance
+        local key = entry.Key
+        if inst and key and self.Translations[self.Locale] and self.Translations[self.Locale][key] then
+            pcall(function() inst.Text = self.Translations[self.Locale][key] end)
+        end
+    end
+end
+
+-- ========================================
+-- RESPONSIVENESS & DRAGGING
+-- ========================================
+function StoppedUI:SetupResponsiveness()
+    local camera = workspace.CurrentCamera
+    
+    local function updateResponsive()
+        local viewportSize = camera.ViewportSize
+        
+        -- Bell size scaling
+        local function computeBellSize(viewportY)
+            local base = 60
+            local scale = math.clamp(viewportY / 720, 0.8, 1.5)
+            return math.floor(base * scale)
+        end
+        
+        local bellSize = computeBellSize(viewportSize.Y)
+        self.NotificationBellContainer.Size = UDim2.new(0, bellSize, 0, bellSize)
+        
+        -- Notification panel max height
+        if self.NotificationPanel then
+            local maxHeight = math.min(450, viewportSize.Y * 0.7)
+            if self.NotificationPanel.Visible then
+                local contentHeight = self.NotificationPanelList.AbsoluteContentSize.Y + 16
+                self.NotificationPanel.Size = UDim2.new(0, 360, 0, math.min(maxHeight, contentHeight))
+            end
+        end
+        
+        -- Keep container in bounds
+        local containerSize = self.Container.AbsoluteSize
+        local containerPos = self.Container.AbsolutePosition
+        
+        if containerPos.X + containerSize.X > viewportSize.X then
+            self.Container.Position = UDim2.new(0, viewportSize.X - containerSize.X - 10, 0, self.Container.Position.Y.Offset)
+        end
+        
+        if containerPos.Y + containerSize.Y > viewportSize.Y then
+            self.Container.Position = UDim2.new(0, self.Container.Position.X.Offset, 0, viewportSize.Y - containerSize.Y - 10)
+        end
+        
+        -- Responsive layout (stack vertically on small screens)
+        if viewportSize.X < 700 and self.ShowPreview then
+            self.LeftPane.Size = UDim2.new(1, -20, 0.5, -40)
+            self.PreviewPane.Size = UDim2.new(1, -20, 0.5, -40)
+            self.PreviewPane.Position = UDim2.new(0, 10, 0.5, 30)
+        else
+            self.LeftPane.Size = UDim2.new(0, 350, 1, -70)
+            self.PreviewPane.Size = UDim2.new(1, -380, 1, -70)
+            self.PreviewPane.Position = UDim2.new(0, 370, 0, 70)
+        end
+    end
+    
+    UIHelpers.SafeConnect(camera:GetPropertyChangedSignal("ViewportSize"), updateResponsive, self._allConnections)
+    updateResponsive()
+end
+
+function StoppedUI:MakeDraggable()
+    local dragging = false
+    local dragStartPos = Vector2.new(0, 0)
+    local startWindowPos = Vector2.new(0, 0)
+    local dragConn
+    local snapGhost
+
+    local function stopDrag()
+        dragging = false
+        if dragConn then
+            dragConn:Disconnect()
+            dragConn = nil
+        end
+        if snapGhost then
+            snapGhost:Destroy()
+            snapGhost = nil
+        end
+    end
+    
+    -- Create snap ghost (preview of snapped position)
+    local function createSnapGhost()
+        if snapGhost then return snapGhost end
+        
+        snapGhost = Instance.new("Frame")
+        snapGhost.Size = self.Container.Size
+        snapGhost.BackgroundColor3 = self.Theme.Accent
+        snapGhost.BackgroundTransparency = 0.85
+        snapGhost.BorderSizePixel = 0
+        snapGhost.ZIndex = -1
+        snapGhost.Visible = false
+        snapGhost.Parent = self.ScreenGui
+        UIHelpers.CreateRound(snapGhost, self.Theme.Radius + 4)
+        UIHelpers.CreateStroke(snapGhost, self.Theme.Accent, 2, 0.6)
+        
+        return snapGhost
     end
 
-    -- Destroy the NotifyGui and all children
-    if self.NotifyGui and self.NotifyGui.Parent then
-        pcall(function() self.NotifyGui:Destroy() end)
+    UIHelpers.SafeConnect(self.Topbar.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStartPos = input.Position
+            startWindowPos = self.Container.AbsolutePosition
+            
+            if self.SnapToEdges then
+                createSnapGhost()
+            end
+
+            UIHelpers.SafeConnect(input.Changed, function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    stopDrag()
+                end
+            end, nil)
+
+            dragConn = UIHelpers.SafeConnect(RunService.RenderStepped, function()
+                if not dragging then return end
+                local mousePos = UserInputService:GetMouseLocation()
+                local delta = mousePos - dragStartPos
+                local newPos = startWindowPos + delta
+
+                local viewport = workspace.CurrentCamera.ViewportSize
+                local cs = self.Container.AbsoluteSize
+                
+                -- Clamp to viewport
+                newPos = Vector2.new(
+                    math.clamp(newPos.X, 0, math.max(0, viewport.X - cs.X)),
+                    math.clamp(newPos.Y, 0, math.max(0, viewport.Y - cs.Y))
+                )
+                
+                -- Snap to edges with ghost preview
+                if self.SnapToEdges then
+                    local snappedPos = UIHelpers.SnapToEdge(newPos, cs, viewport, self.SnapDistance)
+                    
+                    -- Show ghost if snapping would occur
+                    if snappedPos ~= newPos and snapGhost then
+                        snapGhost.Position = UDim2.new(0, snappedPos.X, 0, snappedPos.Y)
+                        snapGhost.Visible = true
+                    else
+                        if snapGhost then
+                            snapGhost.Visible = false
+                        end
+                    end
+                    
+                    -- Apply final position
+                    self.Container.Position = UDim2.new(0, newPos.X, 0, newPos.Y)
+                else
+                    self.Container.Position = UDim2.new(0, newPos.X, 0, newPos.Y)
+                end
+            end, self._allConnections)
+        end
+    end, self._allConnections)
+
+    UIHelpers.SafeConnect(UserInputService.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and dragging then
+            -- Apply snap on release
+            if self.SnapToEdges then
+                local viewport = workspace.CurrentCamera.ViewportSize
+                local cs = self.Container.AbsoluteSize
+                local currentPos = self.Container.AbsolutePosition
+                local snappedPos = UIHelpers.SnapToEdge(currentPos, cs, viewport, self.SnapDistance)
+                
+                if snappedPos ~= currentPos then
+                    UIHelpers.Tween(self.Container, {
+                        Position = UDim2.new(0, snappedPos.X, 0, snappedPos.Y)
+                    }, 0.2)
+                end
+            end
+            
+            stopDrag()
+        end
+    end, self._allConnections)
+end
+
+-- ========================================
+-- WINDOW CONTROLS
+-- ========================================
+function StoppedUI:Toggle()
+    if not self.ScreenGui then return end
+    if self.ScreenGui.Enabled then
+        self:Hide()
+    else
+        self:Show()
+    end
+end
+
+function StoppedUI:Show()
+    if not self.ScreenGui then return end
+    self.ScreenGui.Enabled = true
+    self.Container.Size = UDim2.new(0, 0, 0, 0)
+    self.Container.BackgroundTransparency = 1
+    UIHelpers.Tween(self.Container, {Size = UDim2.new(0, 800, 0, 550)}, 0.4)
+    UIHelpers.Tween(self.Container, {BackgroundTransparency = 0}, 0.35)
+end
+
+function StoppedUI:Hide()
+    if not self.Container then return end
+    UIHelpers.Tween(self.Container, {Size = UDim2.new(0, 0, 0, 0)}, 0.25)
+    UIHelpers.Tween(self.Container, {BackgroundTransparency = 1}, 0.25)
+    task.delay(0.26, function()
+        if self and self.ScreenGui then
+            self.ScreenGui.Enabled = false
+        end
+    end)
+end
+
+function StoppedUI:Destroy()
+    -- Cleanup all connections
+    UIHelpers.CleanupConnections(self._allConnections)
+    
+    -- Destroy all sliders
+    for _, slider in ipairs(self._sliders) do
+        if slider and slider.Destroy then
+            pcall(function() slider:Destroy() end)
+        end
     end
     
-    -- Clear references
-    self.ScreenGui = nil
-    self.Container = nil
-    self.NotificationPanel = nil
-    self.NotificationBell = nil
-    self.NotificationBellContainer = nil
-    self.NotificationBadge = nil
-    self._keybinds = {}
-    self._configs = {}
-    self._configCallbacks = {}
-    self._imgCache = {}
+    -- Destroy config events
+    if self.Config then
+        if self.Config.OnRequestSave then
+            self.Config.OnRequestSave:Destroy()
+        end
+        if self.Config.OnRequestLoad then
+            self.Config.OnRequestLoad:Destroy()
+        end
+    end
+    
+    -- Destroy GUIs
+    if self.ScreenGui then
+        self.ScreenGui:Destroy()
+    end
+    if self.NotifyGui then
+        self.NotifyGui:Destroy()
+    end
 end
 
 return StoppedUI
