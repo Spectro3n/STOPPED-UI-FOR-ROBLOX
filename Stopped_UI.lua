@@ -678,11 +678,11 @@ function StoppedUI:CreateTopbar()
     UIHelpers.CreateRound(logo, 6)
     self.Logo = logo
     
-    if config.Logo then
-        logo.Image = UIHelpers.ResolveImage(config.Logo)
-    else
-        logo.Image = "N"
-    end
+    -- if config.Logo then
+    --     logo.Image = UIHelpers.ResolveImage(config.Logo)
+    -- else
+    --     logo.Image = "N"
+    -- end
     
     -- Close Button
     local closeBtn = Instance.new("TextButton")
