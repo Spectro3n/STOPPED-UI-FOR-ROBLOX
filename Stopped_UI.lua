@@ -636,6 +636,20 @@ function StoppedUI:CreateMainContainer()
     self.CurrentTab = nil
 end
 
+function UIHelpers.SafeSetImage(imageLabel, image)
+    if not imageLabel or not image then return end
+    
+    local ok = pcall(function()
+        imageLabel.Image = UIHelpers.ResolveImage(image)
+    end)
+    
+    if not ok then
+        -- fallback invisível (não quebra nada)
+        imageLabel.Image = ""
+        imageLabel.ImageTransparency = 1
+    end
+end
+
 function StoppedUI:CreateTopbar()
     -- Topbar
     self.Topbar = Instance.new("Frame")
@@ -678,11 +692,12 @@ function StoppedUI:CreateTopbar()
     UIHelpers.CreateRound(logo, 6)
     self.Logo = logo
     
-    -- if config.Logo then
-    --     logo.Image = UIHelpers.ResolveImage(config.Logo)
-    -- else
-    --     logo.Image = "N"
-    -- end
+    if self.LogoImage then
+        UIHelpers.SafeSetImage(logo, self.LogoImage)
+    else
+        logo.Image = ""
+        logo.ImageTransparency = 1
+    end
     
     -- Close Button
     local closeBtn = Instance.new("TextButton")
