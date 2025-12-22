@@ -2088,7 +2088,6 @@ function StoppedUI:ToggleDevMode()
         end
         self:Notify({Text = "Dev Mode Disabled", Type = "Info"})
     end
-end
     self.PreviewPane = Instance.new("Frame")
     self.PreviewPane.Name = "PreviewPane"
     self.PreviewPane.Size = UDim2.new(1, -380, 1, -70)
