@@ -681,7 +681,7 @@ function StoppedUI:CreateTopbar()
     if config.Logo then
         logo.Image = UIHelpers.ResolveImage(config.Logo)
     else
-        logo.Image = "rbxassetid://3944680095"
+        logo.Image = "N"
     end
     
     -- Close Button
